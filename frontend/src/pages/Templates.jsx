@@ -1,0 +1,34 @@
+import {useEffect,useMemo,useState} from 'react'
+import {CopyPlus,FileUp,Pencil,Plus,Trash2,Undo2} from 'lucide-react'
+import {Link,useNavigate} from 'react-router-dom'
+import {api,getError} from '../lib/api'
+import {Card,ErrorBox,Loader,PageHeader,Status} from '../components/UI'
+
+export default function Templates(){
+  const [rows,setRows]=useState(null),[masters,setMasters]=useState([]),[error,setError]=useState(''),[message,setMessage]=useState(''),[showImport,setShowImport]=useState(false),[departmentFilter,setDepartmentFilter]=useState('')
+  const [importForm,setImportForm]=useState({name:'Imported KPI Template',designation_id:'',file:null}),navigate=useNavigate()
+  const designations=useMemo(()=>masters.flatMap(d=>d.departments.flatMap(dep=>dep.designations.map(x=>({...x,label:`${d.name} / ${dep.name} / ${x.name}`})))),[masters])
+  const load=()=>Promise.all([api.get('/kpi/templates'),api.get('/admin/masters')]).then(([r,m])=>{setRows(r.data);setMasters(m.data)}).catch(e=>setError(getError(e)))
+  useEffect(()=>{load()},[])
+  async function publish(id){try{setError('');setMessage('');await api.post(`/kpi/templates/${id}/publish`);setMessage('Template published and ready for assignment.');load()}catch(e){setError(getError(e))}}
+  async function newVersion(id){try{setError('');const {data}=await api.post(`/kpi/templates/${id}/new-version`);navigate(`/templates/new?edit=${data.id}`)}catch(e){setError(getError(e))}}
+  async function editTarget(template){if(template.status==='draft'){navigate(`/templates/new?edit=${template.id}`);return}await newVersion(template.id)}
+  async function unpublish(id){if(!window.confirm('Move this unused published target back to draft?'))return;try{setError('');await api.post(`/kpi/templates/${id}/unpublish`);setMessage('Target unpublished. You can edit it now.');load()}catch(e){setError(getError(e))}}
+  async function removeTemplate(id){if(!window.confirm('Remove this template? This is available only when it has no assignments.'))return;try{setError('');await api.delete(`/kpi/templates/${id}`);setMessage('Template removed.');load()}catch(e){setError(getError(e))}}
+  async function importFile(){
+    if(!importForm.file){setError('Choose an Excel or CSV file first.');return}
+    if(!importForm.name.trim()){setError('Enter a template name.');return}
+    try{
+      setError('');setMessage('');const ext=importForm.file.name.toLowerCase().split('.').pop();let data
+      if(ext==='csv'){
+        const csv_text=await importForm.file.text();({data}=await api.post('/kpi/templates/import-csv',{name:importForm.name,designation_id:importForm.designation_id?Number(importForm.designation_id):null,csv_text}))
+      }else{
+        const fd=new FormData();fd.append('file',importForm.file);fd.append('name',importForm.name);if(importForm.designation_id)fd.append('designation_id',importForm.designation_id);({data}=await api.post('/kpi/templates/import-excel',fd,{headers:{'Content-Type':'multipart/form-data'}}))
+      }
+      setMessage(`Imported ${data.kras.length} KRA(s) as a draft. Review weights, targets, evidence rules and scoring before publishing.`);setShowImport(false);setImportForm({name:'Imported KPI Template',designation_id:'',file:null});load()
+    }catch(e){setError(getError(e))}
+  }
+  const departmentOptions=[...new Set(designations.map(x=>x.label.split(' / ')[1]).filter(Boolean))].sort()
+  const visibleRows=(rows||[]).filter(t=>!departmentFilter||designations.find(x=>Number(x.id)===Number(t.designation_id))?.label.split(' / ')[1]===departmentFilter)
+  return <><PageHeader title="KPI Templates" subtitle="Create easy task-based targets for each department and role." actions={<><button className="secondary" onClick={()=>setShowImport(v=>!v)}><FileUp size={16}/>Import</button><Link className="primary" to="/templates/new"><Plus size={16}/>Create simple template</Link></>}/><ErrorBox error={error}/>{message?<div className="success-box">{message}</div>:null}<Card><div className="helper-strip"><strong>How to use:</strong> choose a department, create one template for each role, add the task and explain how it is completed. Published targets can be edited through a safe new version.</div><div className="form-grid"><label>Show department<select value={departmentFilter} onChange={e=>setDepartmentFilter(e.target.value)}><option value="">All departments</option>{departmentOptions.map(x=><option key={x} value={x}>{x}</option>)}</select></label></div></Card>{showImport?<Card className="import-card"><h3>Import a KPI template</h3><p className="muted small-copy">Use the simple columns: KRA, KPI/task, Target, Measurement/how to complete. Advanced columns are optional.</p><div className="form-grid"><label>Template name<input value={importForm.name} onChange={e=>setImportForm({...importForm,name:e.target.value})}/></label><label>Designation<select value={importForm.designation_id} onChange={e=>setImportForm({...importForm,designation_id:e.target.value})}><option value="">Any designation</option>{designations.map(x=><option key={x.id} value={x.id}>{x.label}</option>)}</select></label><label>Excel / CSV file<input type="file" accept=".xlsx,.xls,.csv" onChange={e=>setImportForm({...importForm,file:e.target.files?.[0]||null})}/></label></div><div className="footer-actions"><button className="secondary" onClick={()=>setShowImport(false)}>Cancel</button><button className="primary" onClick={importFile}>Import as draft</button></div></Card>:null}{!rows?<Loader/>:<Card><div className="table-wrap"><table><thead><tr><th>Template / role</th><th>Department</th><th>Sections</th><th>Total marks</th><th>Version</th><th>Status</th><th>Actions</th></tr></thead><tbody>{visibleRows.map(t=>{const department=designations.find(x=>Number(x.id)===Number(t.designation_id))?.label.split(' / ')[1]||'All departments';return <tr key={t.id}><td><strong>{t.name}</strong><div className="cell-help">{t.designation||'All roles'}</div></td><td>{department}</td><td>{t.kras.length}</td><td className={Math.abs(Number(t.total_weight)-100)<0.001?'good-text':'bad-text'}>{t.total_weight}/100</td><td>v{t.version}</td><td><Status value={t.status}/></td><td><div className="row-actions"><button className="secondary small" onClick={()=>editTarget(t)}><Pencil size={14}/>{t.status==='active'?'Edit target':'Edit'}</button>{t.status==='draft'?<button className="primary small" disabled={!t.validation?.publishable} onClick={()=>publish(t.id)}>Publish</button>:null}{t.status==='active'?<button className="secondary small" onClick={()=>unpublish(t.id)}><Undo2 size={14}/>Unpublish</button>:null}<button className="icon-button danger" aria-label="Remove template" onClick={()=>removeTemplate(t.id)}><Trash2 size={14}/></button></div></td></tr>})}</tbody></table></div>{!visibleRows.length?<div className="empty">No templates for this department yet.</div>:null}</Card>}</>
+}

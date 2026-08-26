@@ -1,0 +1,60 @@
+KPI PERFORMANCE MANAGEMENT SYSTEM - DYNAMIC EDITION v1.2
+
+STACK
+  React + Vite frontend
+  FastAPI / Python backend
+  PostgreSQL database
+  Local evidence storage: backend/uploads/
+
+FASTEST START
+1. Extract the ZIP.
+2. Open a terminal in kpi-performance-system.
+3. Run:
+
+   docker compose up --build
+
+4. Open:
+   Web: http://localhost:8080
+   API docs: http://localhost:8000/docs
+
+DEMO LOGIN
+  Super Admin: admin@kpi.local / Admin@123
+  HR:          hr@kpi.local / Admin@123
+  Manager:     project@kpi.local / Admin@123
+  Employee:    project.employee@kpi.local / Admin@123
+
+MAIN USER TABS
+  KPI Input -> KPI -> KPI Dashboard
+
+CUSTOMER-READY v1.2 FEATURES
+  - KPI Input can import PDF / Excel / CSV and preview matched KPI rows.
+  - Evidence is attached as a real PDF/Excel/CSV file or an optional URL.
+  - KPI templates can be imported from Excel or CSV.
+  - Employee rosters can be imported from Excel with reporting manager email.
+  - File limit is 10 MB. Uploads use unique filenames under backend/uploads/.
+  - KPI summary can be downloaded as PDF.
+  - Manager/HR approval screens show evidence attachments and PDF preview.
+  - Help guide and field tooltips make KPI filling easier for non-technical users.
+  - Settings contains downloadable sample Excel workbooks.
+  - Super Admin can Reset All Data while preserving org/users/templates/settings.
+
+SAMPLE EXCEL FILES
+  backend/samples/KPI_Input_Sample.xlsx
+  backend/samples/Employee_Import_Sample.xlsx
+  backend/samples/KPI_Template_Import_Sample.xlsx
+
+DATA RESET CLI
+  cd backend
+  python -m app.reset_seed --confirm RESET
+
+IMPORTANT
+  Reset removes KPI cycles, assignments, responses, reviews, audit history and
+  uploaded evidence. It keeps organization structure, users and KPI templates.
+  The demo seed marker prevents a restart from re-creating wiped transactional data.
+
+READ
+  README.md
+  docs/ENHANCEMENT_V1_2.md
+  docs/DYNAMIC_LOGIC.md
+  docs/KPI_SOURCE_MAPPING.md
+  docs/QA.md
