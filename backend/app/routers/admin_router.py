@@ -101,6 +101,7 @@ def list_users(db: Session = Depends(get_db), _=Depends(admin_roles)):
     return [
         {
             "id": u.id,
+            "employee_id": f"EMP-{u.id:04d}",
             "name": u.name,
             "email": u.email,
             "role": u.role.value,

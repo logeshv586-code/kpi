@@ -79,10 +79,14 @@ class KpiTemplate(Base):
     __tablename__ = "kpi_templates"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(160))
+    division_id: Mapped[int | None] = mapped_column(ForeignKey("divisions.id"), nullable=True)
+    department_id: Mapped[int | None] = mapped_column(ForeignKey("departments.id"), nullable=True)
     designation_id: Mapped[int | None] = mapped_column(ForeignKey("designations.id"), nullable=True)
     status: Mapped[TemplateStatus] = mapped_column(Enum(TemplateStatus), default=TemplateStatus.draft)
     version: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    division = relationship("Division")
+    department = relationship("Department")
     designation = relationship("Designation")
     kras = relationship("Kra", back_populates="template", cascade="all, delete-orphan", order_by="Kra.id")
 
@@ -149,6 +153,7 @@ class KpiResponse(Base):
     actual_numeric: Mapped[float | None] = mapped_column(Float, nullable=True)
     answer_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     selected_option: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    measurement: Mapped[str | None] = mapped_column(Text, nullable=True)
     remarks: Mapped[str | None] = mapped_column(Text, nullable=True)
     evidence_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     evidence_file_id: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)

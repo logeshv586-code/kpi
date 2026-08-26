@@ -72,6 +72,8 @@ class KraIn(BaseModel):
 
 class TemplateIn(BaseModel):
     name: str = Field(min_length=2, max_length=160)
+    division_id: int | None = None
+    department_id: int | None = None
     designation_id: int | None = None
     kras: list[KraIn]
 
@@ -111,6 +113,7 @@ class ResponseIn(BaseModel):
     actual_numeric: float | None = None
     answer_text: str | None = None
     selected_option: str | None = None
+    measurement: str | None = None
     remarks: str | None = None
     evidence_url: str | None = None
     evidence_file_id: str | None = None

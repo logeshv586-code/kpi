@@ -20,12 +20,13 @@ import Settings from './pages/Settings'
 
 function RoleGate({roles, children}) {
   const {user} = useAuth()
-  return roles.includes(user?.role) ? children : <Navigate to="/dashboard" replace/>
+  return roles.includes(user?.role) ? children : <Navigate to="/kpi-input" replace/>
 }
 
 function Protected() {
   const {user} = useAuth()
   if (!user) return <Navigate to="/login" replace/>
+  const home = ['superadmin','hr'].includes(user.role) ? 'reports' : 'kpi-input'
   return <Layout><Routes>
     <Route path="dashboard" element={<Dashboard/>}/>
     <Route path="kpi-input" element={<KpiInput/>}/>
@@ -42,15 +43,16 @@ function Protected() {
     <Route path="masters" element={<RoleGate roles={['superadmin','hr']}><Masters/></RoleGate>}/>
     <Route path="audit" element={<RoleGate roles={['superadmin','hr']}><Audit/></RoleGate>}/>
     <Route path="settings" element={<RoleGate roles={['superadmin','hr']}><Settings/></RoleGate>}/>
-    <Route index element={<Navigate to="dashboard" replace/>}/>
-    <Route path="*" element={<Navigate to="dashboard" replace/>}/>
+    <Route index element={<Navigate to={home} replace/>}/>
+    <Route path="*" element={<Navigate to={home} replace/>}/>
   </Routes></Layout>
 }
 
 export default function App() {
   const {user} = useAuth()
+  const home = ['superadmin','hr'].includes(user?.role) ? '/reports' : '/kpi-input'
   return <Routes>
-    <Route path="/login" element={user ? <Navigate to="/dashboard" replace/> : <Login/>}/>
+    <Route path="/login" element={user ? <Navigate to={home} replace/> : <Login/>}/>
     <Route path="/*" element={<Protected/>}/>
   </Routes>
 }

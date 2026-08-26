@@ -17,6 +17,9 @@ from ..importing import create_template_from_import_rows, match_response_rows
 from ..models import (
     AssignmentStatus,
     CycleStatus,
+    Department,
+    Designation,
+    Division,
     KpiAssignment,
     KpiCycle,
     KpiItem,
@@ -36,10 +39,54 @@ admin_roles = require_roles(Role.superadmin, Role.hr)
 review_roles = require_roles(Role.superadmin, Role.hr, Role.manager)
 
 
+def _validate_scope(payload: TemplateIn, db: Session):
+    if payload.designation_id:
+        designation = db.scalar(select(Designation).where(Designation.id == payload.designation_id))
+        if not designation:
+            raise HTTPException(400, "Selected role was not found")
+        if payload.department_id and payload.department_id != designation.department_id:
+            raise HTTPException(400, "Selected role does not belong to the selected department")
+        if payload.division_id and payload.division_id != designation.department.division_id:
+            raise HTTPException(400, "Selected role does not belong to the selected division")
+    if payload.department_id:
+        department = db.scalar(select(Department).where(Department.id == payload.department_id))
+        if not department:
+            raise HTTPException(400, "Selected department was not found")
+        if payload.division_id and payload.division_id != department.division_id:
+            raise HTTPException(400, "Selected department does not belong to the selected division")
+    if payload.division_id and not db.scalar(select(Division).where(Division.id == payload.division_id)):
+        raise HTTPException(400, "Selected division was not found")
+
+
+def _template_matches_employee(template: KpiTemplate, employee: User):
+    designation = employee.designation
+    department = designation.department if designation else None
+    division = department.division if department else None
+    if template.designation_id and (not designation or template.designation_id != designation.id):
+        return False
+    if template.department_id and (not department or template.department_id != department.id):
+        return False
+    if template.division_id and (not division or template.division_id != division.id):
+        return False
+    return True
+
+
+def _template_scope_rank(template: KpiTemplate):
+    return (bool(template.designation_id), bool(template.department_id), bool(template.division_id))
+
+
 def template_json(t: KpiTemplate):
+    # Older templates only stored designation_id. Derive the full hierarchy
+    # for them so filters and assignment continue to work consistently.
+    scope_department = t.department or (t.designation.department if t.designation else None)
+    scope_division = t.division or (scope_department.division if scope_department else None)
     return {
         "id": t.id,
         "name": t.name,
+        "division_id": t.division_id,
+        "division": scope_division.name if scope_division else None,
+        "department_id": t.department_id,
+        "department": scope_department.name if scope_department else None,
         "designation_id": t.designation_id,
         "designation": t.designation.name if t.designation else None,
         "status": t.status.value,
@@ -77,7 +124,7 @@ def _load_template(db: Session, template_id: int):
     return db.scalar(
         select(KpiTemplate)
         .where(KpiTemplate.id == template_id)
-        .options(joinedload(KpiTemplate.designation), joinedload(KpiTemplate.kras).joinedload(Kra.items))
+        .options(joinedload(KpiTemplate.division), joinedload(KpiTemplate.department), joinedload(KpiTemplate.designation), joinedload(KpiTemplate.kras).joinedload(Kra.items))
     )
 
 
@@ -117,7 +164,7 @@ def _notify(user: User | None, subject: str, body: str):
 def templates(db: Session = Depends(get_db), _=Depends(get_current_user)):
     items = db.scalars(
         select(KpiTemplate)
-        .options(joinedload(KpiTemplate.designation), joinedload(KpiTemplate.kras).joinedload(Kra.items))
+        .options(joinedload(KpiTemplate.division), joinedload(KpiTemplate.department), joinedload(KpiTemplate.designation), joinedload(KpiTemplate.kras).joinedload(Kra.items))
         .order_by(KpiTemplate.id.desc())
     ).unique().all()
     return [template_json(t) for t in items]
@@ -125,7 +172,8 @@ def templates(db: Session = Depends(get_db), _=Depends(get_current_user)):
 
 @router.post("/templates")
 def create_template(payload: TemplateIn, db: Session = Depends(get_db), user=Depends(admin_roles)):
-    t = KpiTemplate(name=payload.name.strip(), designation_id=payload.designation_id, status=TemplateStatus.draft)
+    _validate_scope(payload, db)
+    t = KpiTemplate(name=payload.name.strip(), division_id=payload.division_id, department_id=payload.department_id, designation_id=payload.designation_id, status=TemplateStatus.draft)
     db.add(t)
     db.flush()
     for kra_in in payload.kras:
@@ -153,6 +201,9 @@ def update_template(template_id: int, payload: TemplateIn, db: Session = Depends
     if t.status != TemplateStatus.draft:
         raise HTTPException(409, "Published templates are locked. Create a new version before editing.")
     t.name = payload.name.strip()
+    _validate_scope(payload, db)
+    t.division_id = payload.division_id
+    t.department_id = payload.department_id
     t.designation_id = payload.designation_id
     for kra in list(t.kras):
         db.delete(kra)
@@ -328,6 +379,8 @@ def publish(template_id: int, db: Session = Depends(get_db), user=Depends(admin_
         select(KpiTemplate).where(
             KpiTemplate.id != t.id,
             KpiTemplate.name == t.name,
+            KpiTemplate.division_id == t.division_id,
+            KpiTemplate.department_id == t.department_id,
             KpiTemplate.designation_id == t.designation_id,
             KpiTemplate.status == TemplateStatus.active,
         )
@@ -345,7 +398,7 @@ def new_version(template_id: int, db: Session = Depends(get_db), user=Depends(ad
     old = _load_template(db, template_id)
     if not old:
         raise HTTPException(404, "Template not found")
-    clone = KpiTemplate(name=old.name, designation_id=old.designation_id, status=TemplateStatus.draft, version=old.version + 1)
+    clone = KpiTemplate(name=old.name, division_id=old.division_id, department_id=old.department_id, designation_id=old.designation_id, status=TemplateStatus.draft, version=old.version + 1)
     db.add(clone)
     db.flush()
     for old_kra in old.kras:
@@ -422,7 +475,7 @@ def assign(payload: AssignmentIn, db: Session = Depends(get_db), actor=Depends(a
     valid, msg = validate_template(template, strict=True)
     if not valid:
         raise HTTPException(400, msg)
-    employee = db.get(User, payload.user_id)
+    employee = db.scalar(select(User).where(User.id == payload.user_id).options(joinedload(User.designation).joinedload(Designation.department).joinedload(Department.division)))
     cycle = db.get(KpiCycle, payload.cycle_id)
     if not employee:
         raise HTTPException(404, "Employee not found")
@@ -430,8 +483,8 @@ def assign(payload: AssignmentIn, db: Session = Depends(get_db), actor=Depends(a
         raise HTTPException(404, "Cycle not found")
     if cycle.status == CycleStatus.closed:
         raise HTTPException(409, "Cannot assign KPI to a closed cycle")
-    if template.designation_id and employee.designation_id and template.designation_id != employee.designation_id:
-        raise HTTPException(400, "Template designation does not match employee designation")
+    if not _template_matches_employee(template, employee):
+        raise HTTPException(400, "Template hierarchy does not match this employee")
     a = KpiAssignment(**payload.model_dump())
     db.add(a)
     db.flush()
@@ -453,17 +506,18 @@ def auto_assign(payload: AutoAssignIn, db: Session = Depends(get_db), actor=Depe
     if cycle.status == CycleStatus.closed:
         raise HTTPException(409, "Cannot assign KPI to a closed cycle")
 
-    users = db.scalars(select(User).where(User.active.is_(True)).order_by(User.id)).all()
+    users = db.scalars(select(User).where(User.active.is_(True)).options(joinedload(User.designation).joinedload(Designation.department).joinedload(Department.division)).order_by(User.id)).unique().all()
     templates = db.scalars(
         select(KpiTemplate)
         .where(KpiTemplate.status == TemplateStatus.active)
-        .options(joinedload(KpiTemplate.kras).joinedload(Kra.items))
+        .options(joinedload(KpiTemplate.division), joinedload(KpiTemplate.department), joinedload(KpiTemplate.designation), joinedload(KpiTemplate.kras).joinedload(Kra.items))
         .order_by(KpiTemplate.version.desc(), KpiTemplate.id.desc())
     ).unique().all()
-    by_designation = {}
+    by_scope = {}
     for t in templates:
-        if t.designation_id and t.designation_id not in by_designation and validate_template(t, strict=True)[0]:
-            by_designation[t.designation_id] = t
+        if validate_template(t, strict=True)[0]:
+            key = (t.division_id, t.department_id, t.designation_id)
+            by_scope.setdefault(key, t)
 
     assigned, skipped, no_template = [], [], []
     for employee in users:
@@ -476,7 +530,8 @@ def auto_assign(payload: AutoAssignIn, db: Session = Depends(get_db), actor=Depe
         existing = db.scalar(select(KpiAssignment).where(KpiAssignment.cycle_id == cycle.id, KpiAssignment.user_id == employee.id))
         if existing:
             skipped.append(employee.name); continue
-        template = by_designation.get(employee.designation_id)
+        matching = [t for t in by_scope.values() if _template_matches_employee(t, employee)]
+        template = max(matching, key=_template_scope_rank) if matching else None
         if not template:
             no_template.append(employee.name); continue
         a = KpiAssignment(cycle_id=cycle.id, user_id=employee.id, template_id=template.id)
@@ -562,6 +617,7 @@ def get_assignment(assignment_id: int, db: Session = Depends(get_db), user: User
                 "actual_numeric": r.actual_numeric,
                 "answer_text": r.answer_text,
                 "selected_option": r.selected_option,
+                "measurement": r.measurement,
                 "remarks": r.remarks,
                 "evidence_url": r.evidence_url,
                 "evidence_file_id": r.evidence_file_id,
