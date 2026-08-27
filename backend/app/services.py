@@ -25,7 +25,7 @@ def item_config(item: KpiItem) -> dict[str, Any]:
     meta = raw.get("meta") if isinstance(raw.get("meta"), dict) else {}
     score_map = raw.get("score_map") if isinstance(raw.get("score_map"), dict) else None
     if score_map is None and item.input_type in {"choice", "yesno"}:
-        # Backward-compatible flat option map: {"Excellent": 100, ...}
+        # Backward-compatible flat option map from older templates.
         score_map = {k: v for k, v in raw.items() if isinstance(v, (int, float)) and k not in {"max"}}
     max_rating = raw.get("max", meta.get("max_rating", 5))
     thresholds = raw.get("thresholds") if isinstance(raw.get("thresholds"), list) else []
@@ -71,6 +71,19 @@ def validate_template(template: KpiTemplate, strict: bool = True) -> tuple[bool,
                 return False, f"KPI '{item.question}' must have a positive weight"
             if item.direction not in {"higher", "lower"}:
                 return False, f"KPI '{item.question}' has an invalid direction"
+            if strict and item.input_type == "choice":
+                score_map = item_config(item)["score_map"]
+                if not score_map:
+                    return False, f"KPI '{item.question}' uses Custom Dropdown. Add at least one result name and score before publishing"
+                for label, score in score_map.items():
+                    if not str(label).strip():
+                        return False, f"KPI '{item.question}' has a blank Custom Dropdown result name"
+                    try:
+                        score_value = float(score)
+                    except (TypeError, ValueError):
+                        return False, f"KPI '{item.question}' has an invalid score for result '{label}'"
+                    if score_value < 0 or score_value > 100:
+                        return False, f"KPI '{item.question}' result '{label}' score must be between 0 and 100"
     return True, "OK"
 
 
