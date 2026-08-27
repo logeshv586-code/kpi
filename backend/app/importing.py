@@ -34,9 +34,6 @@ def parse_dropdown_results(value: Any) -> dict[str, float]:
     Accepted examples:
       Customer A=100; Customer B=80; Pending=40
       Completed:100 | Partial:50 | Not completed:0
-
-    Result names are preserved exactly as typed while duplicate detection is
-    case/punctuation-insensitive to match KPI input validation.
     """
     text = str(value or "").strip()
     if not text:
@@ -48,10 +45,7 @@ def parse_dropdown_results(value: Any) -> dict[str, float]:
     for part in parts:
         match = re.match(r"^(.*?)\s*(?:=|:)\s*(-?\d+(?:\.\d+)?)\s*%?\s*$", part)
         if not match:
-            raise HTTPException(
-                400,
-                f"Invalid Custom Dropdown Results value '{part}'. Use Result Name=Score; Result Name=Score",
-            )
+            raise HTTPException(400, f"Invalid Custom Dropdown Results value '{part}'. Use Result Name=Score; Result Name=Score")
         label = match.group(1).strip()
         score = float(match.group(2))
         if not label:
@@ -98,9 +92,6 @@ def match_response_rows(assignment: KpiAssignment, rows: list[dict[str, Any]]) -
             raw = str(row.get("actual_value") or "").strip()
             if best.input_type in {"choice", "yesno"}:
                 score_map = item_config(best).get("score_map", {})
-                # Result names are business-defined values (customer/status/result names).
-                # Match them exactly after normalization so Customer A cannot silently
-                # become Customer B through fuzzy matching.
                 option = next((name for name in score_map if normalize_name(name) == normalize_name(raw)), None)
                 result["selected_option"] = option
                 result["value_valid"] = option is not None
@@ -132,6 +123,8 @@ def _valid_input_type(value: Any) -> str:
         "multiple_choice": "choice",
         "custom_dropdown": "choice",
         "dropdown": "choice",
+        "number_quantity": "number",
+        "quantity": "number",
         "boolean": "yesno",
         "yes_no": "yesno",
         "tat": "days",
@@ -148,7 +141,6 @@ def create_template_from_import_rows(db: Session, name: str, designation_id: int
     for row in rows:
         groups.setdefault(str(row["kra"]).strip(), []).append(row)
 
-    # Determine KRA weights. If the source provides complete valid KRA weights, preserve them.
     provided_kra_weights: dict[str, float] = {}
     for kra_name, kra_rows in groups.items():
         vals = [parse_number(x.get("kra_weight")) for x in kra_rows]
@@ -193,25 +185,25 @@ def create_template_from_import_rows(db: Session, name: str, designation_id: int
             if input_type == "yesno":
                 score_map = {"Yes": 100, "No": 0}
             elif input_type == "choice":
-                # Fully user-defined. When supplied in Excel/CSV, import the exact
-                # result names and score percentages. When blank, keep it blank so
-                # HR/Admin completes the draft in Template Builder before publish.
                 score_map = parse_dropdown_results(row.get("dropdown_results"))
             else:
                 score_map = {}
 
-            options = {
-                "score_map": score_map,
-                "meta": {
-                    "frequency": str(row.get("frequency") or "Monthly / as configured").strip(),
-                    "measurement": str(row.get("measurement") or "").strip(),
-                    "source": source,
-                    "weight_basis": "Source-defined" if use_source_kra and use_source_items else "Provisional auto-balanced weight; HR should review",
-                    "scoring_method": "target_ratio",
-                    "score_cap_pct": 100,
-                    "evidence_required": _truthy(row.get("evidence_required")),
-                },
+            configured_source = str(row.get("source") or source or "").strip()
+            default_weight_basis = "Source-defined" if use_source_kra and use_source_items else "Provisional auto-balanced weight; HR should review"
+            meta = {
+                "frequency": str(row.get("frequency") or "Monthly / as configured").strip(),
+                "unit": str(row.get("unit") or ("%" if input_type == "percentage" else "")).strip(),
+                "measurement": str(row.get("measurement") or "").strip(),
+                "task_responsibility": str(row.get("task_responsibility") or row.get("kpi") or "").strip(),
+                "source": configured_source,
+                "weight_basis": str(row.get("weight_basis") or default_weight_basis).strip(),
+                "scoring_method": "target_ratio",
+                "score_cap_pct": 100,
+                # Evidence/description remain optional in the current KPI Input workflow.
+                "evidence_required": False,
             }
+            options = {"score_map": score_map, "meta": meta}
             db.add(KpiItem(
                 kra_id=kra.id,
                 question=str(row["kpi"]).strip(),
