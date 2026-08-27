@@ -59,7 +59,7 @@ export default function Layout({children}) {
         <header className="topbar">
           <div className="crumb">Monthly KPI Performance Management</div>
           <div className="top-context">
-            <span>{user?.division || 'Organization'}</span>
+            <span>{user?.department || 'Organization'}</span>
             <div className="avatar small">{user?.name?.slice(0, 1)}</div>
           </div>
         </header>
