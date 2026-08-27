@@ -129,7 +129,8 @@ def list_users(db: Session = Depends(get_db), _=Depends(get_current_user)):
     return [
         {
             "id": u.id,
-            "employee_id": f"EMP-{u.id:04d}",
+            "employee_id": u.employee_no or f"EMP-{u.id:04d}",
+            "employee_no": u.employee_no or f"EMP-{u.id:04d}",
             "name": u.name,
             "email": u.email,
             "role": u.role.value,
@@ -150,6 +151,9 @@ def list_users(db: Session = Depends(get_db), _=Depends(get_current_user)):
 def add_user(payload: UserCreate, db: Session = Depends(get_db), actor=Depends(admin_roles)):
     if db.scalar(select(User).where(User.email == payload.email)):
         raise HTTPException(409, "Email already exists")
+    emp_no = (payload.employee_no or "").strip()
+    if emp_no and db.scalar(select(User).where(User.employee_no == emp_no)):
+        raise HTTPException(409, f"Employee Number '{emp_no}' already exists")
     try:
         role = Role(payload.role)
     except ValueError:
@@ -159,6 +163,7 @@ def add_user(payload: UserCreate, db: Session = Depends(get_db), actor=Depends(a
     if payload.designation_id and not db.get(Designation, payload.designation_id):
         raise HTTPException(404, "Designation not found")
     user = User(
+        employee_no=emp_no if emp_no else None,
         name=payload.name.strip(),
         email=payload.email,
         password_hash=hash_password(payload.password),
@@ -168,7 +173,10 @@ def add_user(payload: UserCreate, db: Session = Depends(get_db), actor=Depends(a
     )
     db.add(user)
     db.flush()
-    audit(db, actor.id, "create", "user", user.id, {"email": user.email})
+    if not user.employee_no:
+        user.employee_no = f"EMP-{user.id:04d}"
+        db.flush()
+    audit(db, actor.id, "create", "user", user.id, {"email": user.email, "employee_no": user.employee_no})
     db.commit()
     db.refresh(user)
     return user
@@ -180,7 +188,23 @@ def update_user(user_id: int, payload: UserUpdate, db: Session = Depends(get_db)
     if not user:
         raise HTTPException(404, "User not found")
     data = payload.model_dump(exclude_unset=True)
-    if "role" in data:
+    if "email" in data and data["email"]:
+        email_clean = data["email"].strip().lower()
+        exist = db.scalar(select(User).where(User.email == email_clean, User.id != user_id))
+        if exist:
+            raise HTTPException(409, "Email address already in use by another user")
+        data["email"] = email_clean
+    if "employee_no" in data and data["employee_no"]:
+        emp_clean = data["employee_no"].strip()
+        exist = db.scalar(select(User).where(User.employee_no == emp_clean, User.id != user_id))
+        if exist:
+            raise HTTPException(409, f"Employee Number '{emp_clean}' already in use")
+        data["employee_no"] = emp_clean
+    if "password" in data and data["password"]:
+        data["password_hash"] = hash_password(data.pop("password"))
+    elif "password" in data:
+        data.pop("password")
+    if "role" in data and data["role"]:
         try:
             data["role"] = Role(data["role"])
         except ValueError:
@@ -193,9 +217,35 @@ def update_user(user_id: int, payload: UserUpdate, db: Session = Depends(get_db)
         raise HTTPException(404, "Designation not found")
     for key, value in data.items():
         setattr(user, key, value)
-    audit(db, actor.id, "update", "user", user.id, {k: (v.value if isinstance(v, Role) else v) for k, v in data.items()})
+    audit(db, actor.id, "update", "user", user.id, {k: (v.value if isinstance(v, Role) else str(v)) for k, v in data.items()})
     db.commit()
-    return {"ok": True}
+    return {"ok": True, "message": f"Employee {user.name} updated successfully"}
+
+
+@router.delete("/users/{user_id}")
+def delete_user(user_id: int, db: Session = Depends(get_db), actor=Depends(admin_roles)):
+    if user_id == actor.id:
+        raise HTTPException(400, "You cannot delete your own account while logged in")
+    user = db.get(User, user_id)
+    if not user:
+        raise HTTPException(404, "User not found")
+    if user.role == Role.superadmin and user.email == "superadmin@kpi.com":
+        raise HTTPException(400, "Primary system superadmin account cannot be deleted")
+
+    assignments = db.scalars(select(KpiAssignment).where(KpiAssignment.user_id == user_id)).all()
+    for a in assignments:
+        db.delete(a)
+
+    reports = db.scalars(select(User).where(User.manager_id == user_id)).all()
+    for r in reports:
+        r.manager_id = None
+
+    name = user.name
+    emp_no = user.employee_no or f"EMP-{user.id:04d}"
+    db.delete(user)
+    audit(db, actor.id, "delete", "user", user_id, {"name": name, "employee_no": emp_no})
+    db.commit()
+    return {"ok": True, "message": f"Employee {name} ({emp_no}) deleted successfully"}
 
 
 @router.get("/hierarchy")

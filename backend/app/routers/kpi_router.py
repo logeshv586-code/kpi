@@ -630,6 +630,7 @@ def my_assignments(db: Session = Depends(get_db), user: User = Depends(get_curre
         {
             "id": a.id,
             "employee_id": a.user_id,
+            "employee_no": a.user.employee_no if a.user and a.user.employee_no else f"EMP-{a.user.id:04d}",
             "employee": a.user.name if a.user else None,
             "division": a.user.designation.department.division.name if a.user and a.user.designation and a.user.designation.department and a.user.designation.department.division else None,
             "department": a.user.designation.department.name if a.user and a.user.designation and a.user.designation.department else None,

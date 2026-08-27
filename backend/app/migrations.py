@@ -27,3 +27,8 @@ def ensure_schema_upgrades():
                 conn.execute(text("ALTER TABLE kpi_templates ADD COLUMN division_id INTEGER"))
             if "department_id" not in columns:
                 conn.execute(text("ALTER TABLE kpi_templates ADD COLUMN department_id INTEGER"))
+    if "users" in tables:
+        columns = {c["name"] for c in inspector.get_columns("users")}
+        if "employee_no" not in columns:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE users ADD COLUMN employee_no VARCHAR(50)"))

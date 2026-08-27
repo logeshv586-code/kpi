@@ -1,6 +1,6 @@
 import {useEffect, useMemo, useState} from 'react'
 import {Link} from 'react-router-dom'
-import {FileUp, KeyRound, Plus, ShieldAlert, UserPlus} from 'lucide-react'
+import {FileUp, KeyRound, Pencil, Plus, ShieldAlert, Trash2, UserPlus} from 'lucide-react'
 import {api, getError} from '../lib/api'
 import {useAuth} from '../lib/auth'
 import {Card, ErrorBox, Loader, Modal, PageHeader, Status} from '../components/UI'
@@ -14,6 +14,7 @@ export default function Employees(){
   const [error,setError]=useState('')
   const [message,setMessage]=useState('')
   const [showModal,setShowModal]=useState(false)
+  const [editingUser,setEditingUser]=useState(null)
   const [importOpen,setImportOpen]=useState(false)
   const [importFile,setImportFile]=useState(null)
   const [busy,setBusy]=useState(false)
@@ -25,6 +26,7 @@ export default function Employees(){
   const [quickAddBusy, setQuickAddBusy] = useState(false)
 
   const [form,setForm]=useState({
+    employee_no:'',
     name:'',
     email:'',
     password:'Admin@123',
@@ -34,6 +36,41 @@ export default function Employees(){
     department_id:'',
     designation_id:''
   })
+
+  function openAddModal() {
+    setEditingUser(null)
+    const nextNum = users ? `EMP-${String(users.length + 1).padStart(4,'0')}` : 'EMP-0001'
+    setForm({
+      employee_no: nextNum,
+      name:'',
+      email:'',
+      password:'Admin@123',
+      role:'employee',
+      manager_id:'',
+      division_id:'',
+      department_id:'',
+      designation_id:''
+    })
+    setAutoEmail(true)
+    setShowModal(true)
+  }
+
+  function openEditModal(u) {
+    setEditingUser(u)
+    setForm({
+      employee_no: u.employee_no || u.employee_id || '',
+      name: u.name || '',
+      email: u.email || '',
+      password: '',
+      role: u.role || 'employee',
+      manager_id: u.manager_id ? String(u.manager_id) : '',
+      division_id: '',
+      department_id: '',
+      designation_id: u.designation_id ? String(u.designation_id) : ''
+    })
+    setAutoEmail(false)
+    setShowModal(true)
+  }
 
   const loadUsers=()=>api.get('/admin/users').then(r=>setUsers(r.data)).catch(e=>setError(getError(e)))
   const loadMasters=()=>api.get('/admin/masters').then(r=>setMasters(r.data)).catch(e=>setError(getError(e)))
@@ -117,25 +154,50 @@ export default function Employees(){
     }
   }
 
-  async function create(){
+  async function saveEmployee(){
     if (!isAdmin) {
-      setError('Only Super Admin or HR can create new employees.')
+      setError('Only Super Admin or HR can create or edit employee profiles.')
       return
     }
     try{
       setError('')
       setMessage('')
-      await api.post('/admin/users',{
-        ...form,
+      const payload = {
+        employee_no: form.employee_no ? form.employee_no.trim() : null,
+        name: form.name.trim(),
+        email: form.email.trim(),
+        role: form.role,
         manager_id: form.manager_id ? Number(form.manager_id) : null,
         designation_id: form.designation_id ? Number(form.designation_id) : null
-      })
-      setMessage(`Employee '${form.name}' created successfully.`)
+      }
+      if (form.password) payload.password = form.password
+
+      if (editingUser) {
+        await api.patch(`/admin/users/${editingUser.id}`, payload)
+        setMessage(`Employee '${form.name}' updated successfully.`)
+      } else {
+        await api.post('/admin/users', payload)
+        setMessage(`Employee '${form.name}' created successfully.`)
+      }
       setShowModal(false)
-      setForm({name:'',email:'',password:'Admin@123',role:'employee',manager_id:'',division_id:'',department_id:'',designation_id:''})
-      setAutoEmail(true)
+      setEditingUser(null)
       loadUsers()
     }catch(e){
+      setError(getError(e))
+    }
+  }
+
+  async function deleteEmployee(u) {
+    if (!isAdmin) return
+    const empNo = u.employee_no || u.employee_id || `EMP-${u.id}`
+    if (!window.confirm(`Permanently delete employee '${u.name}' (${empNo})? You can create / add them again anytime.`)) return
+    try {
+      setError('')
+      setMessage('')
+      await api.delete(`/admin/users/${u.id}`)
+      setMessage(`Employee '${u.name}' (${empNo}) deleted. You can re-add this employee anytime.`)
+      loadUsers()
+    } catch (e) {
       setError(getError(e))
     }
   }
@@ -144,6 +206,7 @@ export default function Employees(){
     if (!isAdmin) return
     try{
       await api.patch(`/admin/users/${u.id}`,{active:!u.active})
+      setMessage(`Employee '${u.name}' ${u.active ? 'deactivated' : 'activated'}.`)
       loadUsers()
     }catch(e){
       setError(getError(e))
@@ -179,7 +242,7 @@ export default function Employees(){
           <button className="secondary" onClick={()=>setImportOpen(true)}>
             <FileUp size={16}/>Import Excel/CSV
           </button>
-          <button className="primary" onClick={()=>setShowModal(true)}>
+          <button className="primary" onClick={openAddModal}>
             <UserPlus size={16}/>Add Employee
           </button>
         </div>
@@ -216,7 +279,7 @@ export default function Employees(){
             <tbody>
               {users.map(u => (
                 <tr key={u.id}>
-                  <td><strong>{u.employee_id || `EMP-${String(u.id).padStart(4,'0')}`}</strong></td>
+                  <td><strong>{u.employee_no || u.employee_id || `EMP-${String(u.id).padStart(4,'0')}`}</strong></td>
                   <td><strong>{u.name}</strong></td>
                   <td>{u.email}</td>
                   <td><span style={{textTransform:'capitalize'}}>{u.role}</span></td>
@@ -233,11 +296,21 @@ export default function Employees(){
                   <td><Status value={u.active ? 'active' : 'inactive'}/></td>
                   {isAdmin ? (
                     <td>
-                      {u.role !== 'superadmin' ? (
-                        <button className="secondary small" onClick={()=>toggle(u)}>
-                          {u.active ? 'Deactivate' : 'Activate'}
+                      <div className="row-actions" style={{display:'flex',gap:'6px',alignItems:'center',flexWrap:'wrap'}}>
+                        <button className="secondary small" title="Edit employee profile" onClick={()=>openEditModal(u)}>
+                          <Pencil size={13}/>Edit
                         </button>
-                      ) : null}
+                        {u.role !== 'superadmin' ? (
+                          <button className="secondary small" title={u.active ? 'Deactivate employee' : 'Activate employee'} onClick={()=>toggle(u)}>
+                            {u.active ? 'Deactivate' : 'Activate'}
+                          </button>
+                        ) : null}
+                        {!u.active && u.role !== 'superadmin' ? (
+                          <button className="secondary small" title="Delete deactivated employee profile" onClick={()=>deleteEmployee(u)} style={{color:'#dc2626',borderColor:'#fca5a5',background:'#fef2f2'}}>
+                            <Trash2 size={13}/>Delete
+                          </button>
+                        ) : null}
+                      </div>
                     </td>
                   ) : null}
                 </tr>
@@ -248,16 +321,16 @@ export default function Employees(){
       </Card>
     )}
 
-    {/* Easy Add Employee Modal */}
+    {/* Easy Add / Edit Employee Modal */}
     {showModal ? (
       <Modal 
-        title="Add New Employee (Admin Only)" 
-        onClose={()=>{setShowModal(false); setQuickAddType(null)}}
+        title={editingUser ? `Edit Employee: ${editingUser.name}` : "Add New Employee (Admin Only)"} 
+        onClose={()=>{setShowModal(false); setEditingUser(null); setQuickAddType(null)}}
         className="wide-modal"
         actions={
           <>
-            <button className="secondary" onClick={()=>{setShowModal(false); setQuickAddType(null)}}>Cancel</button>
-            <button className="primary" onClick={create}>Create Employee</button>
+            <button className="secondary" onClick={()=>{setShowModal(false); setEditingUser(null); setQuickAddType(null)}}>Cancel</button>
+            <button className="primary" onClick={saveEmployee}>{editingUser ? 'Update Employee' : 'Create Employee'}</button>
           </>
         }
       >
@@ -265,6 +338,15 @@ export default function Employees(){
           Fill in employee details. Dynamically add new Division, Department, or Role directly in dropdowns if needed.
         </p>
         <div className="form-grid">
+          <label className="span-2">
+            Employee No / Unique ID * <span className="field-note">(Unique ID to fetch data & assign tasks)</span>
+            <input 
+              value={form.employee_no} 
+              onChange={e => setForm({...form, employee_no: e.target.value})} 
+              placeholder="e.g. EMP-0015"
+            />
+          </label>
+
           <label className="span-2">
             Full Name *
             <input 

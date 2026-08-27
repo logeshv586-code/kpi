@@ -17,6 +17,7 @@ class LoginIn(BaseModel):
 
 class UserOut(BaseModel):
     id: int
+    employee_no: str | None = None
     name: str
     email: str
     role: str
@@ -26,6 +27,7 @@ class UserOut(BaseModel):
 
 
 class UserCreate(BaseModel):
+    employee_no: str | None = None
     name: str = Field(min_length=2, max_length=120)
     email: str
     password: str = Field(min_length=6)
@@ -43,7 +45,10 @@ class UserCreate(BaseModel):
 
 
 class UserUpdate(BaseModel):
+    employee_no: str | None = None
     name: str | None = None
+    email: str | None = None
+    password: str | None = None
     role: str | None = None
     manager_id: int | None = None
     designation_id: int | None = None

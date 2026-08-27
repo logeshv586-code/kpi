@@ -286,7 +286,7 @@ export default function KpiInput(){
         <strong>2. Person</strong>
         <select aria-label="Person" value={selectedPerson} onChange={e=>selectPerson(e.target.value)} disabled={!selectedDepartment}>
           <option value="">Choose person</option>
-          {people.map(p=><option value={p.key} key={p.key}>{p.name} · {p.designation}</option>)}
+          {people.map(p=><option value={p.key} key={p.key}>{p.name} ({p.item?.employee_no || p.item?.employee_id || ''}) · {p.designation}</option>)}
         </select>
       </div>
       <div>
@@ -376,7 +376,7 @@ export default function KpiInput(){
       ) : null}
 
       <div className="metric-grid compact">
-        <Card><span>Employee</span><strong className="small-metric">{assignment.employee}</strong></Card>
+        <Card><span>Employee</span><strong className="small-metric">{assignment.employee} {assignment.employee_no ? `(${assignment.employee_no})` : ''}</strong></Card>
         <Card><span>Cycle / Date</span><strong className="small-metric">{selectedDateLabel || assignment.cycle}</strong></Card>
         <Card><span>Form completion</span><strong>{completion}%</strong><div className="bar"><i style={{width:`${completion}%`}}/></div></Card>
         <Card>
