@@ -12,7 +12,14 @@ const splitWeight=(total,count)=>{
   return out
 }
 
-const mapToOptions=map=>Object.entries(map||{}).map(([label,score])=>({label,score:Number(score)}))
+function mapToOptions(map){
+  const source=map||{}
+  const legacyDefaults={Excellent:100,Good:80,Average:60,Poor:40,'Not achieved':0}
+  const sourceKeys=Object.keys(source)
+  const isLegacyPreset=sourceKeys.length===Object.keys(legacyDefaults).length&&Object.entries(legacyDefaults).every(([label,score])=>Number(source[label])===score)
+  if(isLegacyPreset)return[]
+  return Object.entries(source).map(([label,score])=>({label,score:Number(score)}))
+}
 const optionsToMap=rows=>Object.fromEntries((rows||[]).filter(row=>String(row.label||'').trim()).map(row=>[String(row.label).trim(),Number(row.score||0)]))
 
 const newItem=(weight=100)=>({
