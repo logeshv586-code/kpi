@@ -53,17 +53,32 @@ def match_response_rows(assignment: KpiAssignment, rows: list[dict[str, Any]]) -
             "input_type": best.input_type if matched else None,
             "actual_numeric": None,
             "selected_option": None,
+            "value_valid": None,
+            "value_message": None,
         }
         if matched and best:
             raw = str(row.get("actual_value") or "").strip()
             if best.input_type in {"choice", "yesno"}:
                 score_map = item_config(best).get("score_map", {})
+                # Result names are business-defined values (customer/status/result names).
+                # Match them exactly after normalization so Customer A cannot silently
+                # become Customer B through fuzzy matching.
                 option = next((name for name in score_map if normalize_name(name) == normalize_name(raw)), None)
-                if option is None and raw:
-                    option = max(score_map, key=lambda x: difflib.SequenceMatcher(None, normalize_name(raw), normalize_name(x)).ratio(), default=None)
                 result["selected_option"] = option
+                result["value_valid"] = option is not None
+                if option is None:
+                    if not score_map:
+                        result["value_message"] = "No custom dropdown results are configured for this KPI"
+                    elif not raw:
+                        result["value_message"] = "Enter one of the configured dropdown result names"
+                    else:
+                        result["value_message"] = f"'{raw}' is not a configured dropdown result"
             else:
-                result["actual_numeric"] = parse_number(raw)
+                numeric = parse_number(raw)
+                result["actual_numeric"] = numeric
+                result["value_valid"] = numeric is not None
+                if numeric is None:
+                    result["value_message"] = "Enter a valid number or percentage"
         preview.append(result)
     return preview
 
