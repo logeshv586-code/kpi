@@ -1,5 +1,5 @@
 import {useEffect, useMemo, useState} from 'react'
-import {CalendarDays, CheckCircle2, Download, ExternalLink, FileUp, Info} from 'lucide-react'
+import {CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Download, ExternalLink, Eye, FileUp, Info} from 'lucide-react'
 import {useSearchParams} from 'react-router-dom'
 import {api, apiFileUrl, getError} from '../lib/api'
 import {useAuth} from '../lib/auth'
@@ -8,6 +8,7 @@ import {Card, ErrorBox, Loader, Modal, PageHeader, Status, Tooltip} from '../com
 import {assignmentDepartment, assignmentMonth, compareText} from '../lib/sorting'
 
 function monthLabel(a){
+  if (!a) return 'Choose month'
   const value = a?.month || assignmentMonth(a)
   if (value && /^\d{4}-\d{2}/.test(value)) {
     const d = new Date(`${value.slice(0,7)}-01T00:00:00`)
@@ -163,6 +164,7 @@ export default function KpiInputV2(){
   const [message,setMessage] = useState('')
   const [busy,setBusy] = useState(false)
   const [showMonths,setShowMonths] = useState(false)
+  const [selectedYear,setSelectedYear] = useState(new Date().getFullYear())
   const [showImporter,setShowImporter] = useState(false)
   const [importPreview,setImportPreview] = useState(null)
   const [importBusy,setImportBusy] = useState(false)
@@ -312,6 +314,23 @@ export default function KpiInputV2(){
     }
   }
 
+  async function downloadAssignmentPdf(targetAssignment){
+    if (!targetAssignment?.id) return
+    try {
+      const label = monthLabel(targetAssignment)
+      const response = await api.get(`/kpi/assignments/${targetAssignment.id}/pdf?date_label=${encodeURIComponent(label)}`,{responseType:'blob'})
+      const blob = new Blob([response.data],{type:'application/pdf'})
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `kpi_${(targetAssignment.employee || 'employee').replace(/\s+/g,'_')}_${label.replace(/\s+/g,'_')}.pdf`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      setError(getError(e))
+    }
+  }
+
   async function exportPdf(){
     if (!id) return
     if (!allItems.some(isAnswered)) {
@@ -320,15 +339,7 @@ export default function KpiInputV2(){
     }
     try {
       await api.put(`/kpi/assignments/${id}/responses`,payload())
-      const label = monthLabel(currentSummary || assignment)
-      const response = await api.get(`/kpi/assignments/${id}/pdf?date_label=${encodeURIComponent(label)}`,{responseType:'blob'})
-      const blob = new Blob([response.data],{type:'application/pdf'})
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `kpi_${(assignment.employee || 'employee').replace(/\s+/g,'_')}_${label.replace(/\s+/g,'_')}.pdf`
-      a.click()
-      URL.revokeObjectURL(url)
+      await downloadAssignmentPdf(currentSummary || assignment)
     } catch (e) {
       setError(getError(e))
     }
@@ -368,6 +379,19 @@ export default function KpiInputV2(){
     setMessage('Imported KPI values applied. Review completed, remaining, achievement and marks before submitting.')
   }
 
+  async function generateCycleAndLoad() {
+    setBusy(true)
+    setError('')
+    try {
+      await api.post('/kpi/cycles/auto-generate')
+      await loadList()
+    } catch (e) {
+      setError(getError(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return <>
     <PageHeader
       title="KPI Input"
@@ -384,7 +408,21 @@ export default function KpiInputV2(){
     <div className="helper-strip"><strong>How scoring works:</strong> Number/Percentage KPIs use Actual ÷ Expected Target × Weight. Custom Dropdown KPIs use the score % configured in the KPI Template. PDF evidence and description remain optional.</div>
     <ErrorBox error={error}/>{message?<div className="success-box">{message}</div>:null}
 
-    {!assignment ? <Loader/> : <>
+    {!list ? (
+      <Loader />
+    ) : list.length === 0 ? (
+      <Card style={{textAlign: 'center', padding: '36px 20px', margin: '20px 0'}}>
+        <h3 style={{fontSize: '1.1rem', fontWeight: 600, color: '#1e293b', marginBottom: '8px'}}>No Active KPI Assignments Found</h3>
+        <p style={{fontSize: '0.88rem', color: '#64748b', maxWidth: '480px', margin: '0 auto 16px'}}>
+          No KPI assignments exist for your account or department in this period. Click below to generate assignments from active templates.
+        </p>
+        <button className="primary" disabled={busy} onClick={generateCycleAndLoad}>
+          {busy ? 'Generating...' : 'Generate & Refresh KPI Assignments'}
+        </button>
+      </Card>
+    ) : !assignment ? (
+      <Loader />
+    ) : <>
       {submitted?<Card style={{marginBottom:'14px',borderLeft:locked?'4px solid #ef4444':'4px solid #3b82f6'}}><div style={{display:'flex',justifyContent:'space-between',gap:'12px',alignItems:'center'}}><div><strong>{locked?'KPI submitted and locked':'Submitted KPI - admin review mode'}</strong><div className="cell-help">Status: {assignment.status}</div></div>{isAdminOrHr?<button className="secondary small" onClick={reopen}>Reopen for editing</button>:null}</div></Card>:null}
 
       <div className="metric-grid compact">
@@ -457,7 +495,60 @@ export default function KpiInputV2(){
       {!locked?<div className="footer-actions sticky-actions" style={{display:'flex',justifyContent:'space-between'}}><button className="secondary" onClick={()=>setShowImporter(true)}><FileUp size={16}/>Import Excel / CSV</button><div style={{display:'flex',gap:'10px'}}><button className="secondary" disabled={busy} onClick={save}>{busy?'Saving...':'Save draft'}</button><button className="primary" disabled={busy || !ready} onClick={submit}>{busy?'Working...':'Submit KPI'}</button></div></div>:<div className="locked-note">This KPI is locked after submission.</div>}
     </>}
 
-    {showMonths?<Modal title="Select KPI month" onClose={()=>setShowMonths(false)} actions={<button className="secondary" onClick={()=>setShowMonths(false)}>Close</button>}><div style={{display:'grid',gap:'8px'}}>{personRows.length?personRows.map(a=><button key={a.id} className={String(a.id)===String(id)?'primary':'secondary'} onClick={()=>selectMonth(a)} style={{justifyContent:'space-between'}}><span>{monthLabel(a)}</span><Status value={a.status}/></button>):<div className="empty">No KPI months assigned for this employee.</div>}</div></Modal>:null}
+    {showMonths ? (
+      <Modal title={`KPI Calendar & Month Filter - ${people.find(p=>p.key===person)?.name || 'Employee'}`} onClose={() => setShowMonths(false)} className="wide-modal" actions={<button className="secondary" onClick={() => setShowMonths(false)}>Close</button>}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:'12px',marginBottom:'14px',background:'#f8fafc',padding:'12px 16px',borderRadius:'10px',border:'1px solid #e2e8f0'}}>
+          <div style={{display:'flex',gap:'10px',alignItems:'center'}}>
+            <button type="button" className="secondary small" onClick={() => setSelectedYear(y => y - 1)}><ChevronLeft size={16}/> Prev Year</button>
+            <strong style={{fontSize:'1.15rem',color:'#1e293b'}}>{selectedYear}</strong>
+            <button type="button" className="secondary small" onClick={() => setSelectedYear(y => y + 1)}>Next Year <ChevronRight size={16}/></button>
+          </div>
+          <div className="cell-help" style={{margin:0}}>
+            Click <strong>View KPI</strong> to open input form or <strong>PDF</strong> to download report for that month.
+          </div>
+        </div>
+
+        <div className="calendar-grid-container">
+          {['January','February','March','April','May','June','July','August','September','October','November','December'].map((mName, mIdx) => {
+            const monthCode = `${selectedYear}-${String(mIdx + 1).padStart(2, '0')}`
+            const match = personRows.find(a => {
+              const mVal = a.month || assignmentMonth(a) || ''
+              return mVal.startsWith(monthCode)
+            })
+            const isCurrentActive = match && String(match.id) === String(id)
+
+            return (
+              <div key={mName} className={`calendar-month-card ${match ? 'has-assignment' : ''} ${isCurrentActive ? 'active-selected' : ''}`}>
+                <div className="calendar-month-header">
+                  <span className="calendar-month-name">{mName}</span>
+                  {match ? <Status value={match.status} /> : <span style={{fontSize:'0.72rem',color:'#94a3b8'}}>No KPI</span>}
+                </div>
+                {match ? (
+                  <div style={{margin:'8px 0'}}>
+                    <div style={{fontSize:'0.78rem',fontWeight:700,color:'#2563eb'}}>
+                      Score: {Number(match.calculated_score || match.final_score || 0).toFixed(1)} / 100
+                    </div>
+                    <div className="cell-help" style={{marginTop:'2px'}}>{monthLabel(match)}</div>
+                  </div>
+                ) : (
+                  <div style={{fontSize:'0.75rem',color:'#94a3b8',margin:'8px 0'}}>Not assigned</div>
+                )}
+                {match ? (
+                  <div className="calendar-month-actions">
+                    <button type="button" className={isCurrentActive ? 'primary small' : 'secondary small'} style={{flex:1}} onClick={() => selectMonth(match)}>
+                      <Eye size={13}/> View KPI
+                    </button>
+                    <button type="button" className="secondary small" title="Download PDF Report" onClick={() => downloadAssignmentPdf(match)}>
+                      <Download size={13}/> PDF
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            )
+          })}
+        </div>
+      </Modal>
+    ) : null}
 
     {showImporter?<Modal title="Import KPI values from Excel or CSV" onClose={()=>{setShowImporter(false);setImportPreview(null)}} className="wide-modal" actions={importPreview?<><button className="secondary" onClick={()=>{setShowImporter(false);setImportPreview(null)}}>Cancel</button><button className="primary" disabled={!importPreview.matched} onClick={applyImport}>Apply {importPreview.matched} matched rows</button></>:null}>{!importPreview?<FileUpload onUploaded={parseImport} label="Choose KPI input file" help="XLSX, XLS or CSV · maximum 10 MB"/>:<><div className="import-summary"><strong>{importPreview.matched} matched</strong><span>{importPreview.unmatched} need manual review</span></div><div className="table-wrap"><table><thead><tr><th>From file</th><th>Matched KPI</th><th>Actual</th><th>Description</th></tr></thead><tbody>{importPreview.rows.map((r,i)=><tr key={i}><td>{r.kpi_parameter}</td><td>{r.matched_question || 'Not matched'}</td><td>{r.actual_value || '—'}</td><td>{r.remarks || '—'}</td></tr>)}</tbody></table></div></>}{importBusy?<div className="helper-strip">Reading KPI rows...</div>:null}</Modal>:null}
   </>

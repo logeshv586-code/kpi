@@ -98,6 +98,26 @@ export default function TemplateBuilderV2(){
     updateItem(ki,ii,{choice_options:rows.filter((_,i)=>i!==oi)})
   }
 
+  function addMultipleOptions(ki,ii,count=5){
+    const rows=kras[ki].items[ii].choice_options||[]
+    const newRows=Array.from({length:count},()=>({label:'',score:''}))
+    updateItem(ki,ii,{choice_options:[...rows,...newRows]})
+  }
+
+  function applyPreset(ki,ii,presetType){
+    let presets=[]
+    if(presetType==='5star'){
+      presets=[{label:'Excellent',score:100},{label:'Very Good',score:80},{label:'Good',score:60},{label:'Average',score:40},{label:'Poor',score:0}]
+    }else if(presetType==='3star'){
+      presets=[{label:'High',score:100},{label:'Medium',score:50},{label:'Low',score:0}]
+    }else if(presetType==='passfail'){
+      presets=[{label:'Achieved / Pass',score:100},{label:'Not Achieved / Fail',score:0}]
+    }else if(presetType==='numeric5'){
+      presets=[{label:'Option 1 (100%)',score:100},{label:'Option 2 (75%)',score:75},{label:'Option 3 (50%)',score:50},{label:'Option 4 (25%)',score:25},{label:'Option 5 (0%)',score:0}]
+    }
+    updateItem(ki,ii,{choice_options:presets})
+  }
+
   function balanceAll(){
     const kws=splitWeight(100,kras.length)
     setKras(cur=>cur.map((k,ki)=>{
@@ -105,6 +125,7 @@ export default function TemplateBuilderV2(){
       return{...k,weight:kws[ki],items:k.items.map((it,ii)=>({...it,weight:iws[ii]}))}
     }))
   }
+
   function balanceItems(ki){
     setKras(cur=>cur.map((k,i)=>{
       if(i!==ki)return k
@@ -172,7 +193,7 @@ export default function TemplateBuilderV2(){
   }
 
   return<>
-    <PageHeader title={editId?'Edit KPI Template':'Create KPI Template'} subtitle="Use Number, Percentage, or create your own dropdown result names." actions={<div style={{display:'flex',gap:'8px'}}><button className="secondary" onClick={()=>navigate('/templates')}><ArrowLeft size={16}/>Back</button><button className="secondary" onClick={balanceAll}><Equal size={16}/>Auto-balance marks</button></div>}/>
+    <PageHeader title={editId?'Edit KPI Template':'Create KPI Template'} subtitle="Use Number, Percentage, or create your own dropdown result names." actions={<div style={{display:'flex',gap:'8px'}}><button className="secondary" onClick={()=>navigate('/templates')}><ArrowLeft size={16}/>Back</button><button className="secondary" onClick={balanceAll}><Equal size={16}/>Auto-balance marks</button><button className="primary" onClick={save}><Save size={16}/>{editId?'Save draft changes':'Save draft template'}</button></div>}/>
     <ErrorBox error={error}/>
 
     <Card>
@@ -185,7 +206,7 @@ export default function TemplateBuilderV2(){
 
     <Card>
       <div className="form-grid"><label>Template name<input value={name} onChange={e=>setName(e.target.value)} placeholder="e.g. Customer Support KPI"/></label><label>Department<input value={selectedDepartment?.name||''} disabled/></label><label>Total weight<input value={`${total} / 100`} disabled className={Math.abs(total-100)<0.001?'valid-field':'invalid-field'}/></label></div>
-      <div className="helper-strip"><strong>Custom Dropdown:</strong> there are no default Excellent/Good/Average values. Click Add result and type exactly the customer name, result status, quality label, or other option you need.</div>
+      <div className="helper-strip"><strong>Custom Dropdown:</strong> add as many custom result options/fields as needed for this KPI. Click <strong>+ Add result</strong> or use quick preset scales below.</div>
     </Card>
 
     <div className="stack">{kras.map((kra,ki)=><Card key={ki}>
@@ -201,8 +222,21 @@ export default function TemplateBuilderV2(){
           {['number','percentage'].includes(item.input_type)?<><label>Expected target *<input type="number" min="0" step="0.01" value={item.target_value??''} onChange={e=>updateItem(ki,ii,{target_value:e.target.value})} placeholder={item.input_type==='percentage'?'100':'e.g. 100'}/></label><label>Unit<input value={item.unit} onChange={e=>updateItem(ki,ii,{unit:e.target.value})} placeholder={item.input_type==='percentage'?'%':'tasks / calls / cases'}/></label><label>Scoring direction<select value={item.direction} onChange={e=>updateItem(ki,ii,{direction:e.target.value})}><option value="higher">Higher result is better</option><option value="lower">Lower result is better</option></select></label></>:null}
 
           {item.input_type==='choice'?<div className="span-2" style={{border:'1px solid #dbeafe',background:'#f8fbff',borderRadius:'10px',padding:'12px'}}>
-            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:'8px',marginBottom:'10px'}}><div><strong>Custom results shown to employee</strong><div className="cell-help">Add your own names. Nothing is pre-filled.</div></div><button type="button" className="secondary small" onClick={()=>addOption(ki,ii)}><Plus size={13}/>Add result</button></div>
-            {(item.choice_options||[]).length===0?<div className="helper-strip" style={{margin:0}}>No results added yet. Click <strong>Add result</strong> and enter your first option.</div>:null}
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:'8px',marginBottom:'10px',flexWrap:'wrap'}}>
+              <div><strong>Custom results shown to employee</strong><div className="cell-help">{(item.choice_options||[]).length} option fields added</div></div>
+              <div style={{display:'flex',gap:'6px',flexWrap:'wrap'}}>
+                <button type="button" className="secondary small" onClick={()=>addOption(ki,ii)}><Plus size={13}/>Add result</button>
+                <button type="button" className="secondary small" onClick={()=>addMultipleOptions(ki,ii,5)}>+ Add 5 fields</button>
+              </div>
+            </div>
+            <div style={{display:'flex',gap:'6px',alignItems:'center',flexWrap:'wrap',marginBottom:'10px',fontSize:'0.75rem',color:'#475569',background:'#eff6ff',padding:'6px 10px',borderRadius:'6px'}}>
+              <strong>Quick presets:</strong>
+              <button type="button" className="text-action" style={{fontSize:'0.75rem'}} onClick={()=>applyPreset(ki,ii,'5star')}>5-Level (100-0%)</button> |
+              <button type="button" className="text-action" style={{fontSize:'0.75rem'}} onClick={()=>applyPreset(ki,ii,'3star')}>3-Level (100/50/0)</button> |
+              <button type="button" className="text-action" style={{fontSize:'0.75rem'}} onClick={()=>applyPreset(ki,ii,'passfail')}>Pass/Fail</button> |
+              <button type="button" className="text-action" style={{fontSize:'0.75rem'}} onClick={()=>applyPreset(ki,ii,'numeric5')}>5 Custom Options</button>
+            </div>
+            {(item.choice_options||[]).length===0?<div className="helper-strip" style={{margin:0}}>No results added yet. Click <strong>Add result</strong> or choose a quick preset above.</div>:null}
             <div style={{display:'grid',gridTemplateColumns:'minmax(180px,1fr) 140px 40px',gap:'8px',alignItems:'end'}}>{(item.choice_options||[]).map((row,oi)=><div key={oi} style={{display:'contents'}}><label>Result / option name<input value={row.label} onChange={e=>updateOption(ki,ii,oi,{label:e.target.value})} placeholder="Type customer or result name"/></label><label>Score %<input type="number" min="0" max="100" step="1" value={row.score} onChange={e=>updateOption(ki,ii,oi,{score:e.target.value})} placeholder="0-100"/></label><button type="button" className="icon-button danger" title="Remove result" onClick={()=>removeOption(ki,ii,oi)}><Trash2 size={14}/></button></div>)}</div>
           </div>:null}
 

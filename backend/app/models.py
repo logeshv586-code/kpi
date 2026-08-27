@@ -84,7 +84,7 @@ class KpiTemplate(Base):
     department_id: Mapped[int | None] = mapped_column(ForeignKey("departments.id"), nullable=True)
     designation_id: Mapped[int | None] = mapped_column(ForeignKey("designations.id"), nullable=True)
     status: Mapped[TemplateStatus] = mapped_column(Enum(TemplateStatus), default=TemplateStatus.draft)
-    version: Mapped[int] = mapped_column(Integer, default=1)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     division = relationship("Division")
     department = relationship("Department")

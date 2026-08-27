@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from .database import SessionLocal
 from .file_storage import clear_uploads
-from .models import AuditLog, KpiAssignment, KpiCycle, KpiResponse, KpiReview
+from .models import AuditLog, Department, Designation, Division, KpiAssignment, KpiCycle, KpiResponse, KpiReview, KpiTemplate, Role, User
 
 
 def reset_transactional_data(db: Session, clear_files: bool = True) -> dict:
@@ -29,6 +29,42 @@ def reset_transactional_data(db: Session, clear_files: bool = True) -> dict:
     db.commit()
     files = clear_uploads() if clear_files else 0
     return {"responses": responses, "reviews": reviews, "assignments": assignments, "cycles": cycles, "audit_logs": audits, "files": files}
+
+
+def reset_full_system_data(db: Session, current_user_id: int | None = None, clear_files: bool = True) -> dict:
+    tx_counts = reset_transactional_data(db, clear_files=clear_files)
+
+    templates = db.query(KpiTemplate).count()
+    db.execute(delete(KpiTemplate))
+
+    db.query(User).update({User.manager_id: None, User.designation_id: None})
+    db.commit()
+
+    if current_user_id:
+        users = db.query(User).filter(User.id != current_user_id, User.role != Role.superadmin).count()
+        db.execute(delete(User).where(User.id != current_user_id, User.role != Role.superadmin))
+    else:
+        users = db.query(User).filter(User.email != "superadmin@kpi.com").count()
+        db.execute(delete(User).where(User.email != "superadmin@kpi.com"))
+
+    designations = db.query(Designation).count()
+    departments = db.query(Department).count()
+    divisions = db.query(Division).count()
+
+    db.execute(delete(Designation))
+    db.execute(delete(Department))
+    db.execute(delete(Division))
+
+    db.commit()
+
+    return {
+        **tx_counts,
+        "templates": templates,
+        "users": users,
+        "designations": designations,
+        "departments": departments,
+        "divisions": divisions,
+    }
 
 
 def main():

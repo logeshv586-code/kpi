@@ -126,6 +126,7 @@ class ResponseIn(BaseModel):
 
 class ResetIn(BaseModel):
     confirm: str
+    mode: str = "transactional"  # "transactional" or "full"
 
 
 class ImportEmployeesResult(BaseModel):

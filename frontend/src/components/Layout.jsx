@@ -1,10 +1,17 @@
 import {NavLink, useNavigate} from 'react-router-dom'
-import {BarChart3, FileInput, FileSpreadsheet, HelpCircle, LogOut, Users} from 'lucide-react'
+import {BarChart3, FileInput, FileSpreadsheet, HelpCircle, LogOut, Settings as SettingsIcon, Users} from 'lucide-react'
 import {useAuth} from '../lib/auth'
 
-const adminNavigation = [['/reports', BarChart3, 'Reports'], ['/employees', Users, 'Employees Directory'], ['/templates', FileSpreadsheet, 'KPI Templates'], ['/kpi-input', FileInput, 'KPI Input']]
-const managerNavigation = [['/reports', BarChart3, 'Team Reports'], ['/employees', Users, 'Employees Directory'], ['/templates', FileSpreadsheet, 'KPI Templates'], ['/kpi-input', FileInput, 'KPI Input']]
-const employeeNavigation = [['/reports', BarChart3, 'My Reports'], ['/employees', Users, 'Employee Directory'], ['/templates', FileSpreadsheet, 'KPI Templates'], ['/kpi-input', FileInput, 'KPI Input']]
+const coreNavigation = [
+  ['/reports', BarChart3, 'Reports'],
+  ['/employees', Users, 'Employees Directory'],
+  ['/templates', FileSpreadsheet, 'KPI Templates'],
+  ['/kpi-input', FileInput, 'KPI Input'],
+  ['/settings', SettingsIcon, 'Settings & Reset Data']
+]
+const adminNavigation = coreNavigation
+const managerNavigation = coreNavigation
+const employeeNavigation = coreNavigation
 
 export default function Layout({children}) {
   const {user, logout} = useAuth()

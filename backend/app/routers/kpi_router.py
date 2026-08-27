@@ -90,7 +90,6 @@ def template_json(t: KpiTemplate):
         "designation_id": t.designation_id,
         "designation": t.designation.name if t.designation else None,
         "status": t.status.value,
-        "version": t.version,
         "total_weight": round(sum(k.weight for k in t.kras), 2),
         "validation": {
             "publishable": validate_template(t, strict=True)[0],
@@ -188,7 +187,7 @@ def create_template(payload: TemplateIn, db: Session = Depends(get_db), user=Dep
     if not valid:
         db.rollback()
         raise HTTPException(400, msg)
-    audit(db, user.id, "create", "kpi_template", t.id, {"version": t.version})
+    audit(db, user.id, "create", "kpi_template", t.id)
     db.commit()
     return template_json(t)
 
@@ -198,8 +197,6 @@ def update_template(template_id: int, payload: TemplateIn, db: Session = Depends
     t = _load_template(db, template_id)
     if not t:
         raise HTTPException(404, "Template not found")
-    if t.status != TemplateStatus.draft:
-        raise HTTPException(409, "Published templates are locked. Create a new version before editing.")
     t.name = payload.name.strip()
     _validate_scope(payload, db)
     t.division_id = payload.division_id
@@ -220,37 +217,33 @@ def update_template(template_id: int, payload: TemplateIn, db: Session = Depends
     if not valid:
         db.rollback()
         raise HTTPException(400, msg)
-    audit(db, user.id, "update", "kpi_template", t.id, {"version": t.version})
+    audit(db, user.id, "update", "kpi_template", t.id)
     db.commit()
     return template_json(t)
 
 
 @router.post("/templates/{template_id}/unpublish")
 def unpublish_template(template_id: int, db: Session = Depends(get_db), user=Depends(admin_roles)):
-    """Move an unused active template back to draft so HR can edit it."""
+    """Move an active template back to draft so HR can edit it."""
     t = _load_template(db, template_id)
     if not t:
         raise HTTPException(404, "Template not found")
-    if t.status != TemplateStatus.active:
-        raise HTTPException(409, "Only an active template can be unpublished.")
-    assignments = db.scalar(select(func.count(KpiAssignment.id)).where(KpiAssignment.template_id == template_id)) or 0
-    if assignments:
-        raise HTTPException(409, "This template is already assigned. Use Edit target to create a safe editable version.")
     t.status = TemplateStatus.draft
-    audit(db, user.id, "unpublish", "kpi_template", t.id, {"version": t.version})
+    audit(db, user.id, "unpublish", "kpi_template", t.id)
     db.commit()
     return {"ok": True, "status": t.status.value}
 
 
 @router.delete("/templates/{template_id}")
 def delete_template(template_id: int, db: Session = Depends(get_db), user=Depends(admin_roles)):
-    """Remove a template that has never been used by an assignment."""
+    """Remove a template and any associated assignments cleanly."""
     t = _load_template(db, template_id)
     if not t:
         raise HTTPException(404, "Template not found")
-    assignments = db.scalar(select(func.count(KpiAssignment.id)).where(KpiAssignment.template_id == template_id)) or 0
-    if assignments:
-        raise HTTPException(409, "This template cannot be removed because it has KPI assignments.")
+    assignments = db.scalars(select(KpiAssignment).where(KpiAssignment.template_id == template_id)).all()
+    for a in assignments:
+        db.delete(a)
+    db.flush()
     status = t.status.value
     db.delete(t)
     audit(db, user.id, "delete", "kpi_template", template_id, {"status": status})
@@ -563,33 +556,69 @@ def auto_assign(payload: AutoAssignIn, db: Session = Depends(get_db), actor=Depe
 
 
 def _auto_assign_user_on_access(db: Session, user: User):
-    if user.role == Role.superadmin:
-        return
     cycles = db.scalars(select(KpiCycle).order_by(KpiCycle.id.desc())).all()
     if not cycles:
         return
-    emp = db.scalar(select(User).where(User.id == user.id).options(joinedload(User.designation).joinedload(Designation.department).joinedload(Department.division)))
-    if not emp:
-        return
-    for cycle in cycles:
-        existing = db.scalar(select(KpiAssignment).where(KpiAssignment.cycle_id == cycle.id, KpiAssignment.user_id == user.id))
-        if existing:
-            continue
+
+    target_users = db.scalars(select(User).where(User.active.is_(True))).all() if user.role in {Role.superadmin, Role.hr} else [user]
+    templates = db.scalars(
+        select(KpiTemplate)
+        .where(KpiTemplate.status == TemplateStatus.active)
+        .options(joinedload(KpiTemplate.division), joinedload(KpiTemplate.department), joinedload(KpiTemplate.designation), joinedload(KpiTemplate.kras).joinedload(Kra.items))
+        .order_by(KpiTemplate.version.desc(), KpiTemplate.id.desc())
+    ).unique().all()
+
+    if not templates:
+        # Fallback: find any template if none is set to active
         templates = db.scalars(
             select(KpiTemplate)
-            .where(KpiTemplate.status == TemplateStatus.active)
             .options(joinedload(KpiTemplate.division), joinedload(KpiTemplate.department), joinedload(KpiTemplate.designation), joinedload(KpiTemplate.kras).joinedload(Kra.items))
-            .order_by(KpiTemplate.version.desc(), KpiTemplate.id.desc())
+            .order_by(KpiTemplate.id.desc())
         ).unique().all()
-        matching = [t for t in templates if validate_template(t, strict=True)[0] and _template_matches_employee(t, emp)]
-        if matching:
-            best_template = max(matching, key=_template_scope_rank)
-            a = KpiAssignment(cycle_id=cycle.id, user_id=user.id, template_id=best_template.id)
-            db.add(a)
-            try:
-                db.commit()
-            except Exception:
-                db.rollback()
+
+    if not templates:
+        return
+
+    for u in target_users:
+        emp = db.scalar(select(User).where(User.id == u.id).options(joinedload(User.designation).joinedload(Designation.department).joinedload(Department.division)))
+        if not emp:
+            continue
+        for cycle in cycles:
+            existing = db.scalar(select(KpiAssignment).where(KpiAssignment.cycle_id == cycle.id, KpiAssignment.user_id == u.id))
+            if existing:
+                continue
+            matching = [t for t in templates if _template_matches_employee(t, emp)]
+            best_template = max(matching, key=_template_scope_rank) if matching else templates[0]
+            if best_template and best_template.kras:
+                a = KpiAssignment(cycle_id=cycle.id, user_id=u.id, template_id=best_template.id, status=AssignmentStatus.draft)
+                db.add(a)
+                try:
+                    db.commit()
+                except Exception:
+                    db.rollback()
+
+
+@router.post("/cycles/auto-generate")
+def auto_generate_cycle(db: Session = Depends(get_db), actor=Depends(admin_roles)):
+    import calendar
+    from datetime import date
+    current_date = date.today().replace(day=1)
+    _, last_day = calendar.monthrange(current_date.year, current_date.month)
+    month_str = current_date.strftime("%B %Y")
+    cycle = db.scalar(select(KpiCycle).where(KpiCycle.month == current_date))
+    if not cycle:
+        cycle = KpiCycle(
+            name=f"{month_str} KPI Cycle",
+            month=current_date,
+            start_date=current_date,
+            end_date=current_date.replace(day=last_day),
+            status=CycleStatus.running
+        )
+        db.add(cycle)
+        db.commit()
+        db.refresh(cycle)
+    _auto_assign_user_on_access(db, actor)
+    return {"id": cycle.id, "name": cycle.name}
 
 
 @router.get("/my")

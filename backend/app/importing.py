@@ -147,6 +147,13 @@ def create_template_from_import_rows(db: Session, name: str, designation_id: int
         vals = [v for v in vals if v is not None]
         if vals:
             provided_kra_weights[kra_name] = vals[0]
+    if provided_kra_weights and len(provided_kra_weights) == len(groups):
+        total_p = sum(provided_kra_weights.values())
+        if total_p > 0 and abs(total_p - 100) > 0.01:
+            provided_kra_weights = {k: round(v * 100 / total_p, 2) for k, v in provided_kra_weights.items()}
+            last_k = list(provided_kra_weights.keys())[-1]
+            provided_kra_weights[last_k] = round(100 - sum(v for k, v in provided_kra_weights.items() if k != last_k), 2)
+
     use_source_kra = len(provided_kra_weights) == len(groups) and abs(sum(provided_kra_weights.values()) - 100) <= 0.01
     if not use_source_kra:
         base = round(100 / len(groups), 2)
@@ -214,4 +221,22 @@ def create_template_from_import_rows(db: Session, name: str, designation_id: int
                 options=options,
             ))
     db.flush()
+
+    # Re-normalize template KRA weights so total KRA weight strictly equals 100 marks
+    kra_list = list(template.kras)
+    if kra_list:
+        total_k_weight = sum(float(k.weight or 0) for k in kra_list)
+        if total_k_weight > 0 and abs(total_k_weight - 100) > 0.01:
+            for k in kra_list:
+                k.weight = round(float(k.weight or 0) * 100 / total_k_weight, 2)
+            kra_list[-1].weight = round(100 - sum(float(k.weight) for k in kra_list[:-1]), 2)
+            for k in kra_list:
+                items = list(k.items)
+                if items:
+                    tot_i = sum(float(i.weight or 0) for i in items)
+                    if tot_i > 0 and abs(tot_i - float(k.weight)) > 0.01:
+                        for i in items:
+                            i.weight = round(float(i.weight or 0) * float(k.weight) / tot_i, 2)
+                        items[-1].weight = round(float(k.weight) - sum(float(i.weight) for i in items[:-1]), 2)
+
     return template

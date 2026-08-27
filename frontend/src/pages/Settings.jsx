@@ -1,17 +1,98 @@
-import {useEffect,useState} from 'react'
-import {Download,RefreshCcw,TriangleAlert} from 'lucide-react'
-import {api,downloadApiFile,getError} from '../lib/api'
+import {useState} from 'react'
+import {RefreshCcw, TriangleAlert} from 'lucide-react'
+import {api, getError} from '../lib/api'
 import {useAuth} from '../lib/auth'
-import {Card,ErrorBox,Loader,Modal,PageHeader} from '../components/UI'
-
-const bandsToText=bands=>(bands||[]).map(x=>`${x.min}:${x.label}`).join('\n')
-const parseBands=text=>String(text||'').split('\n').map(x=>x.trim()).filter(Boolean).map(line=>{const i=line.indexOf(':');return {min:Number(line.slice(0,i)),label:line.slice(i+1).trim()}}).filter(x=>Number.isFinite(x.min)&&x.label).sort((a,b)=>b.min-a.min)
+import {Card, ErrorBox, Modal, PageHeader} from '../components/UI'
 
 export default function Settings(){
-  const {user}=useAuth(),[form,setForm]=useState(null),[error,setError]=useState(''),[message,setMessage]=useState(''),[resetOpen,setResetOpen]=useState(false),[resetText,setResetText]=useState(''),[resetChecked,setResetChecked]=useState(false),[busy,setBusy]=useState(false)
-  useEffect(()=>{api.get('/admin/settings').then(r=>setForm({rating_bands:bandsToText(r.data.rating_bands),score_cap_pct:r.data.score_cap_pct||100,require_evidence_by_default:!!r.data.require_evidence_by_default})).catch(e=>setError(getError(e)))},[])
-  async function save(){try{setError('');setMessage('');const rating_bands=parseBands(form.rating_bands);if(!rating_bands.length)throw new Error('Add at least one rating band');await api.put('/admin/settings',{rating_bands,score_cap_pct:Number(form.score_cap_pct),require_evidence_by_default:form.require_evidence_by_default});setMessage('Scoring settings saved. Custom Dropdown result names and scores are configured per KPI Template.')}catch(e){setError(getError(e))}}
-  async function sample(kind,name){try{await downloadApiFile(`/admin/samples/${kind}`,name)}catch(e){setError(getError(e))}}
-  async function reset(){if(resetText!=='RESET'||!resetChecked)return;setBusy(true);setError('');try{const {data}=await api.post('/admin/reset-data',{confirm:'RESET'});setMessage(`${data.message} Deleted ${data.deleted.assignments} assignment(s), ${data.deleted.responses} response(s) and ${data.deleted.files} uploaded file(s).`);setResetOpen(false);setResetText('');setResetChecked(false)}catch(e){setError(getError(e))}finally{setBusy(false)}}
-  return <><PageHeader title="Settings" subtitle="Scoring defaults, current import formats and administration controls."/><ErrorBox error={error}/>{message?<div className="success-box">{message}</div>:null}{!form?<Loader/>:<><div className="grid-2"><Card><h3>Final score rating bands</h3><p className="muted small-copy">One per line: minimum score : label.</p><textarea className="settings-textarea" value={form.rating_bands} onChange={e=>setForm({...form,rating_bands:e.target.value})}/></Card><Card><h3>Scoring defaults</h3><div className="form-grid"><label>Default score cap %<input type="number" min="100" max="200" value={form.score_cap_pct} onChange={e=>setForm({...form,score_cap_pct:e.target.value})}/></label><label>Evidence by default<select value={form.require_evidence_by_default?'yes':'no'} onChange={e=>setForm({...form,require_evidence_by_default:e.target.value==='yes'})}><option value="no">Optional</option><option value="yes">Required</option></select></label></div><div className="helper-strip" style={{marginTop:'12px'}}>Custom Dropdown result names and score percentages are configured inside each KPI Template. There are no system-wide Excellent/Good/Average presets.</div></Card><Card><h3>How scoring works</h3><div className="logic-list"><div><strong>Higher is better</strong><span>Actual ÷ Target × KPI weight, capped by the configured score cap.</span></div><div><strong>Lower is better</strong><span>Full marks at/below target; above target uses Target ÷ Actual.</span></div><div><strong>Custom Dropdown</strong><span>Selected result percentage configured by HR × KPI weight.</span></div><div><strong>Rating</strong><span>Rating ÷ maximum rating × KPI weight.</span></div></div></Card></div><div className="footer-actions"><button className="primary" onClick={save}>Save scoring settings</button></div><Card className="sample-section"><h3>Download current Excel import formats</h3><p className="muted small-copy">These files use the same field names shown in the current Employee and KPI Template screens.</p><div className="sample-grid"><button className="secondary" onClick={()=>sample('employees','Employee_Import_Sample.xlsx')}><Download size={16}/>Employee import format</button><button className="secondary" onClick={()=>sample('template','KPI_Template_Import_Sample.xlsx')}><Download size={16}/>KPI template format</button></div></Card>{user.role==='superadmin'?<Card className="danger-zone"><div className="danger-head"><TriangleAlert size={22}/><div><h3>Reset all KPI transactional data</h3><p>Deletes KPI cycles, assignments, employee responses, reviews, audit logs and uploaded files. Organization structure, users, templates and scoring settings are preserved.</p></div></div><button className="danger-button" onClick={()=>setResetOpen(true)}><RefreshCcw size={16}/>Reset All Data</button></Card>:null}</>}{resetOpen?<Modal title="Reset all KPI data?" onClose={()=>setResetOpen(false)} actions={<><button className="secondary" onClick={()=>setResetOpen(false)}>Cancel</button><button className="danger-button" disabled={resetText!=='RESET'||!resetChecked||busy} onClick={reset}>{busy?'Resetting...':'Permanently reset data'}</button></>}><div className="danger-confirm"><p>This cannot be undone. Your employees and KPI templates will stay, but all monthly transactional history will be removed.</p><label className="confirm-check"><input type="checkbox" checked={resetChecked} onChange={e=>setResetChecked(e.target.checked)}/> I understand that KPI history and uploaded evidence will be deleted.</label><label>Type <b>RESET</b> to continue<input value={resetText} onChange={e=>setResetText(e.target.value)} placeholder="RESET"/></label></div></Modal>:null}</>
+  const {user} = useAuth()
+  const [error, setError] = useState('')
+  const [message, setMessage] = useState('')
+  const [resetOpen, setResetOpen] = useState(false)
+  const [resetMode, setResetMode] = useState('full')
+  const [resetText, setResetText] = useState('')
+  const [resetChecked, setResetChecked] = useState(false)
+  const [busy, setBusy] = useState(false)
+
+  async function reset(){
+    if (resetText !== 'RESET' || !resetChecked) return
+    setBusy(true); setError(''); setMessage('')
+    try {
+      const {data} = await api.post('/admin/reset-data', {confirm: 'RESET', mode: resetMode})
+      setMessage(data.message)
+      setResetOpen(false); setResetText(''); setResetChecked(false)
+    } catch (e) {
+      setError(getError(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <>
+      <PageHeader
+        title="Settings & System Data Reset"
+        subtitle="Administration controls for Superadmin to reset data and test Excel imports or manual entries from scratch."
+      />
+      <ErrorBox error={error}/>
+      {message ? <div className="success-box">{message}</div> : null}
+
+      <Card className="danger-zone" style={{marginTop: 0}}>
+        <div className="danger-head">
+          <TriangleAlert size={26}/>
+          <div>
+            <h3>Superadmin System Data Reset</h3>
+            <p>
+              Perform a Full System Factory Reset to clear all employees, templates, department hierarchy, and KPI records so you can test Excel imports and manual entries from scratch. Alternatively, clear only monthly KPI transactional data.
+            </p>
+          </div>
+        </div>
+        <button className="danger-button" onClick={() => setResetOpen(true)}>
+          <RefreshCcw size={16}/> Reset System Data
+        </button>
+      </Card>
+
+      {resetOpen ? (
+        <Modal title="Reset System Data" onClose={() => setResetOpen(false)} actions={
+          <>
+            <button className="secondary" onClick={() => setResetOpen(false)}>Cancel</button>
+            <button className="danger-button" disabled={resetText !== 'RESET' || !resetChecked || busy} onClick={reset}>
+              {busy ? 'Resetting...' : 'Execute System Reset'}
+            </button>
+          </>
+        }>
+          <div className="danger-confirm">
+            <p>Select the reset scope below. <strong>This operation cannot be undone.</strong></p>
+            <div style={{display:'grid', gap:'10px', background:'#fff7ed', padding:'14px', borderRadius:'8px', border:'1px solid #fed7aa', margin:'10px 0'}}>
+              <label style={{display:'flex', gap:'10px', alignItems:'flex-start', fontWeight:700, cursor:'pointer'}}>
+                <input type="radio" name="resetMode" value="full" checked={resetMode === 'full'} onChange={e => setResetMode(e.target.value)}/>
+                <div>
+                  <div style={{fontSize:'0.9rem', color:'#991b1b'}}>FULL System Factory Reset (Clear All Data)</div>
+                  <div style={{fontWeight:400, fontSize:'0.78rem', color:'#7f1d1d', marginTop:'3px', lineHeight:'1.4'}}>
+                    Deletes all employees, departments, designations, templates, KRAs, assignments, and evidence files. Only your superadmin login is preserved so you can test Excel imports & manual creation from scratch.
+                  </div>
+                </div>
+              </label>
+              <label style={{display:'flex', gap:'10px', alignItems:'flex-start', fontWeight:700, cursor:'pointer'}}>
+                <input type="radio" name="resetMode" value="transactional" checked={resetMode === 'transactional'} onChange={e => setResetMode(e.target.value)}/>
+                <div>
+                  <div style={{fontSize:'0.9rem', color:'#991b1b'}}>Reset Monthly KPI Data Only</div>
+                  <div style={{fontWeight:400, fontSize:'0.78rem', color:'#7f1d1d', marginTop:'3px', lineHeight:'1.4'}}>
+                    Deletes monthly KPI cycles, assignments, responses, reviews, and uploaded evidence files. Preserves employees, templates, and department hierarchy.
+                  </div>
+                </div>
+              </label>
+            </div>
+            <label className="confirm-check">
+              <input type="checkbox" checked={resetChecked} onChange={e => setResetChecked(e.target.checked)}/> I understand that selected system data and history will be permanently deleted.
+            </label>
+            <label>
+              Type <b>RESET</b> to continue
+              <input value={resetText} onChange={e => setResetText(e.target.value)} placeholder="RESET"/>
+            </label>
+          </div>
+        </Modal>
+      ) : null}
+    </>
+  )
 }

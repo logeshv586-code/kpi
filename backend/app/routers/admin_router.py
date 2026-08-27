@@ -10,7 +10,7 @@ from ..auth import get_current_user, hash_password, require_roles
 from ..database import get_db
 from ..file_storage import TEMPLATE_EXTENSIONS, parse_template_rows, read_table, save_upload
 from ..models import Department, Designation, Division, KpiAssignment, KpiTemplate, Role, SystemSetting, TemplateStatus, User
-from ..reset_seed import reset_transactional_data
+from ..reset_seed import reset_full_system_data, reset_transactional_data
 from ..sample_files import ensure_samples
 from ..schemas import MasterCreate, ResetIn, SettingsIn, UserCreate, UserOut, UserUpdate
 from ..services import audit
@@ -64,11 +64,17 @@ def add_division(payload: MasterCreate, db: Session = Depends(get_db), user=Depe
 
 @router.post("/departments")
 def add_department(payload: MasterCreate, db: Session = Depends(get_db), user=Depends(admin_roles)):
-    if not payload.parent_id:
-        raise HTTPException(400, "division parent_id is required")
-    if not db.get(Division, payload.parent_id):
+    parent_id = payload.parent_id
+    if not parent_id:
+        div = db.scalar(select(Division).order_by(Division.id))
+        if not div:
+            div = Division(name="General Division")
+            db.add(div)
+            db.flush()
+        parent_id = div.id
+    if not db.get(Division, parent_id):
         raise HTTPException(404, "Division not found")
-    obj = Department(name=payload.name.strip(), division_id=payload.parent_id)
+    obj = Department(name=payload.name.strip(), division_id=parent_id)
     db.add(obj)
     db.flush()
     audit(db, user.id, "create", "department", obj.id, {"name": obj.name})
@@ -78,11 +84,22 @@ def add_department(payload: MasterCreate, db: Session = Depends(get_db), user=De
 
 @router.post("/designations")
 def add_designation(payload: MasterCreate, db: Session = Depends(get_db), user=Depends(admin_roles)):
-    if not payload.parent_id:
-        raise HTTPException(400, "department parent_id is required")
-    if not db.get(Department, payload.parent_id):
+    parent_id = payload.parent_id
+    if not parent_id:
+        dep = db.scalar(select(Department).order_by(Department.id))
+        if not dep:
+            div = db.scalar(select(Division).order_by(Division.id))
+            if not div:
+                div = Division(name="General Division")
+                db.add(div)
+                db.flush()
+            dep = Department(name="General Department", division_id=div.id)
+            db.add(dep)
+            db.flush()
+        parent_id = dep.id
+    if not db.get(Department, parent_id):
         raise HTTPException(404, "Department not found")
-    obj = Designation(name=payload.name.strip(), department_id=payload.parent_id)
+    obj = Designation(name=payload.name.strip(), department_id=parent_id)
     db.add(obj)
     db.flush()
     audit(db, user.id, "create", "designation", obj.id, {"name": obj.name})
@@ -133,7 +150,7 @@ def list_users(db: Session = Depends(get_db), _=Depends(get_current_user)):
             "employee_no": u.employee_no or f"EMP-{u.id:04d}",
             "name": u.name,
             "email": u.email,
-            "role": u.role.value,
+            "role": u.role.value if hasattr(u.role, 'value') else str(u.role),
             "manager_id": u.manager_id,
             "manager": manager_names.get(u.manager_id),
             "designation_id": u.designation_id,
@@ -157,7 +174,13 @@ def add_user(payload: UserCreate, db: Session = Depends(get_db), actor=Depends(a
     try:
         role = Role(payload.role)
     except ValueError:
-        raise HTTPException(400, "Invalid role")
+        r_str = str(payload.role).lower()
+        if "manager" in r_str or "lead" in r_str or "head" in r_str or "supervisor" in r_str:
+            role = Role.manager
+        elif "hr" in r_str or "admin" in r_str:
+            role = Role.hr
+        else:
+            role = Role.employee
     if payload.manager_id and not db.get(User, payload.manager_id):
         raise HTTPException(404, "Manager not found")
     if payload.designation_id and not db.get(Designation, payload.designation_id):
@@ -208,7 +231,13 @@ def update_user(user_id: int, payload: UserUpdate, db: Session = Depends(get_db)
         try:
             data["role"] = Role(data["role"])
         except ValueError:
-            raise HTTPException(400, "Invalid role")
+            r_str = str(data["role"]).lower()
+            if "manager" in r_str or "lead" in r_str or "head" in r_str or "supervisor" in r_str:
+                data["role"] = Role.manager
+            elif "hr" in r_str or "admin" in r_str:
+                data["role"] = Role.hr
+            else:
+                data["role"] = Role.employee
     if data.get("manager_id") == user_id:
         raise HTTPException(400, "An employee cannot report to themselves")
     if data.get("manager_id") and not db.get(User, data["manager_id"]):
@@ -458,13 +487,18 @@ async def import_employees_excel(
 
 
 @router.post("/reset-data")
-def reset_all_data(payload: ResetIn, db: Session = Depends(get_db), _=Depends(superadmin_only)):
+def reset_all_data(payload: ResetIn, db: Session = Depends(get_db), actor=Depends(superadmin_only)):
     if payload.confirm != "RESET":
         raise HTTPException(400, "Type RESET exactly to confirm the data reset")
-    counts = reset_transactional_data(db, clear_files=True)
+    if payload.mode == "full":
+        counts = reset_full_system_data(db, current_user_id=actor.id, clear_files=True)
+        message = "Full system data reset complete. All users, templates, organization departments, and KPI history were cleared. Your superadmin account is ready for fresh testing."
+    else:
+        counts = reset_transactional_data(db, clear_files=True)
+        message = "Transactional KPI data was reset. Organization, users, templates, masters and scoring settings were preserved."
     return {
         "ok": True,
-        "message": "Transactional KPI data was reset. Organization, users, templates, masters and scoring settings were preserved.",
+        "message": message,
         "deleted": counts,
     }
 

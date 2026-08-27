@@ -91,7 +91,7 @@ export default function Reports(){
   function bandClass(band){if(band==='Outstanding')return'status-finalized';if(band==='Very Good'||band==='Good')return'status-manager_reviewed';if(band==='Needs Improvement')return'status-submitted';return'status-draft'}
 
   return<>
-    <PageHeader title={title} subtitle={subtitle} actions={<div style={{display:'flex',alignItems:'center',gap:'10px',flexWrap:'wrap'}}><button className="secondary" type="button" onClick={openRange}><CalendarRange size={16}/>{rangeLabel}</button>{departments.length>2?<select value={department} onChange={e=>setDepartment(e.target.value)} style={{maxWidth:'200px'}}>{departments.map(d=><option key={d}>{d}</option>)}</select>:null}<button className="secondary" onClick={exportCsv}><Download size={16}/>Export CSV</button></div>}/>
+    <PageHeader title={title} subtitle={subtitle} actions={<div className="report-actions"><button className="secondary" type="button" onClick={openRange}><CalendarRange size={16}/>{rangeLabel}</button>{departments.length>2?<select value={department} onChange={e=>setDepartment(e.target.value)} aria-label="Department" style={{maxWidth:'200px'}}>{departments.map(d=><option key={d}>{d}</option>)}</select>:null}<button className="secondary" onClick={exportCsv}><Download size={16}/>Export CSV</button></div>}/>
     <ErrorBox error={error}/>
     {!data?<Loader/>:<>
       <div className="helper-strip" style={{marginBottom:'14px'}}><strong>Report period:</strong> {rangeLabel} · {selectedMonths.length} month{selectedMonths.length===1?'':'s'} included.</div>

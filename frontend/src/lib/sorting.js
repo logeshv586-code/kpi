@@ -3,27 +3,28 @@ export function compareText(a, b) {
 }
 
 export function assignmentDepartment(item) {
-  return item.department || 'Unassigned department'
+  return item?.department || 'Unassigned department'
 }
 
 export function assignmentMonth(item) {
-  return item.month || item.cycle || ''
+  return item?.month || item?.cycle || ''
 }
 
 export function sortAssignments(items = []) {
-  return [...items].sort((a, b) =>
+  return [...(items || [])].sort((a, b) =>
     compareText(assignmentDepartment(a), assignmentDepartment(b)) ||
     compareText(assignmentMonth(b), assignmentMonth(a)) ||
-    compareText(a.employee, b.employee) ||
-    compareText(a.template?.name, b.template?.name) ||
-    Number(a.id || 0) - Number(b.id || 0)
+    compareText(a?.employee, b?.employee) ||
+    compareText(a?.template?.name, b?.template?.name) ||
+    Number(a?.id || 0) - Number(b?.id || 0)
   )
 }
 
 export function sortUsers(items = []) {
-  return [...items].sort((a, b) =>
-    compareText(a.department, b.department) ||
-    compareText(a.name, b.name) ||
-    compareText(a.designation, b.designation)
+  return [...(items || [])].sort((a, b) =>
+    compareText(a?.department, b?.department) ||
+    compareText(a?.name, b?.name) ||
+    compareText(a?.designation, b?.designation)
   )
 }
+
