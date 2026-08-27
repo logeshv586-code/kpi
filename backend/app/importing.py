@@ -28,6 +28,44 @@ def parse_number(value: Any) -> float | None:
         return float(match.group(0)) if match else None
 
 
+def parse_dropdown_results(value: Any) -> dict[str, float]:
+    """Parse a user-defined score map from Excel/CSV.
+
+    Accepted examples:
+      Customer A=100; Customer B=80; Pending=40
+      Completed:100 | Partial:50 | Not completed:0
+
+    Result names are preserved exactly as typed while duplicate detection is
+    case/punctuation-insensitive to match KPI input validation.
+    """
+    text = str(value or "").strip()
+    if not text:
+        return {}
+
+    result: dict[str, float] = {}
+    seen: set[str] = set()
+    parts = [part.strip() for part in re.split(r"[;|\n]+", text) if part.strip()]
+    for part in parts:
+        match = re.match(r"^(.*?)\s*(?:=|:)\s*(-?\d+(?:\.\d+)?)\s*%?\s*$", part)
+        if not match:
+            raise HTTPException(
+                400,
+                f"Invalid Custom Dropdown Results value '{part}'. Use Result Name=Score; Result Name=Score",
+            )
+        label = match.group(1).strip()
+        score = float(match.group(2))
+        if not label:
+            raise HTTPException(400, "Every custom dropdown result needs a name")
+        if score < 0 or score > 100:
+            raise HTTPException(400, f"Custom dropdown score for '{label}' must be between 0 and 100")
+        key = normalize_name(label)
+        if key in seen:
+            raise HTTPException(400, f"Duplicate custom dropdown result '{label}'")
+        seen.add(key)
+        result[label] = score
+    return result
+
+
 def match_response_rows(assignment: KpiAssignment, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     items = [item for kra in assignment.template.kras for item in kra.items]
     normalized = {item.id: normalize_name(item.question) for item in items}
@@ -89,7 +127,15 @@ def _truthy(value: Any) -> bool:
 
 def _valid_input_type(value: Any) -> str:
     raw = normalize_name(value).replace(" ", "_")
-    aliases = {"objective": "choice", "multiple_choice": "choice", "boolean": "yesno", "yes_no": "yesno", "tat": "days"}
+    aliases = {
+        "objective": "choice",
+        "multiple_choice": "choice",
+        "custom_dropdown": "choice",
+        "dropdown": "choice",
+        "boolean": "yesno",
+        "yes_no": "yesno",
+        "tat": "days",
+    }
     raw = aliases.get(raw, raw)
     return raw if raw in {"percentage", "number", "currency", "days", "count", "choice", "yesno", "rating"} else "choice"
 
@@ -143,10 +189,19 @@ def create_template_from_import_rows(db: Session, name: str, designation_id: int
                 input_type = "percentage" if "%" in str(row.get("target")) else "number"
             direction = normalize_name(row.get("direction"))
             direction = "lower" if direction.startswith("lower") or "less" in direction else "higher"
+
+            if input_type == "yesno":
+                score_map = {"Yes": 100, "No": 0}
+            elif input_type == "choice":
+                # Fully user-defined. When supplied in Excel/CSV, import the exact
+                # result names and score percentages. When blank, keep it blank so
+                # HR/Admin completes the draft in Template Builder before publish.
+                score_map = parse_dropdown_results(row.get("dropdown_results"))
+            else:
+                score_map = {}
+
             options = {
-                # Custom Dropdown values are intentionally blank after template import.
-                # HR/Admin defines the exact result names and score percentages in Template Builder.
-                "score_map": {"Yes": 100, "No": 0} if input_type == "yesno" else {},
+                "score_map": score_map,
                 "meta": {
                     "frequency": str(row.get("frequency") or "Monthly / as configured").strip(),
                     "measurement": str(row.get("measurement") or "").strip(),
