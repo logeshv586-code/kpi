@@ -1,5 +1,5 @@
 import {Navigate, Route, Routes} from 'react-router-dom'
-import {useAuth} from './lib/auth'
+import {canAccessTab, useAuth} from './lib/auth'
 import Layout from './components/Layout'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
@@ -23,6 +23,11 @@ function RoleGate({roles, children}) {
   return roles.includes(user?.role) ? children : <Navigate to="/kpi-input" replace/>
 }
 
+function TabGate({tab, edit = false, children}) {
+  const {user} = useAuth()
+  return canAccessTab(user, tab, edit) ? children : <Navigate to="/kpi-input" replace/>
+}
+
 function Protected() {
   const {user} = useAuth()
   if (!user) return <Navigate to="/login" replace/>
@@ -33,11 +38,11 @@ function Protected() {
     <Route path="kpi" element={<MyKpi/>}/>
     <Route path="kpi-dashboard" element={<Navigate to={`/${home}`} replace/>}/>
     <Route path="approvals" element={<RoleGate roles={['superadmin','hr','manager']}><Approvals/></RoleGate>}/>
-    <Route path="templates" element={<Templates/>}/>
-    <Route path="templates/new" element={<RoleGate roles={['superadmin','hr']}><TemplateBuilder/></RoleGate>}/>
+    <Route path="templates" element={<TabGate tab="templates"><Templates/></TabGate>}/>
+    <Route path="templates/new" element={<TabGate tab="templates" edit><TemplateBuilder/></TabGate>}/>
     <Route path="cycles" element={<RoleGate roles={['superadmin','hr']}><Cycles/></RoleGate>}/>
     <Route path="assignments" element={<RoleGate roles={['superadmin','hr']}><Assignments/></RoleGate>}/>
-    <Route path="employees" element={<Employees/>}/>
+    <Route path="employees" element={<TabGate tab="employees"><Employees/></TabGate>}/>
     <Route path="hierarchy" element={<Navigate to="/templates" replace/>}/>
     <Route path="reports" element={<Reports/>}/>
     <Route path="masters" element={<RoleGate roles={['superadmin','hr']}><Masters/></RoleGate>}/>

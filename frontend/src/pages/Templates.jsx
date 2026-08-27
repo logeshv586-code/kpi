@@ -2,12 +2,12 @@ import {useEffect, useMemo, useState} from 'react'
 import {Check, Download, Eye, FileUp, FolderTree, Pencil, Plus, Table, Trash2, Undo2} from 'lucide-react'
 import {Link, useNavigate} from 'react-router-dom'
 import {api, downloadApiFile, getError} from '../lib/api'
-import {useAuth} from '../lib/auth'
+import {canAccessTab, useAuth} from '../lib/auth'
 import {Card, ErrorBox, Loader, Modal, PageHeader, Status} from '../components/UI'
 
 export default function Templates(){
   const {user} = useAuth()
-  const isAdmin = ['superadmin','hr'].includes(user?.role)
+  const isAdmin = canAccessTab(user, 'templates', true)
   const [rows, setRows] = useState(null)
   const [masters, setMasters] = useState([])
   const [error, setError] = useState('')

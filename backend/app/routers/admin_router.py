@@ -6,17 +6,17 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
-from ..auth import get_current_user, hash_password, require_roles
+from ..auth import get_current_user, has_tab_permission, hash_password, require_roles, require_tab_permission
 from ..database import get_db
 from ..file_storage import TEMPLATE_EXTENSIONS, parse_template_rows, read_table, save_upload
-from ..models import Department, Designation, Division, KpiAssignment, KpiTemplate, Role, SystemSetting, TemplateStatus, User
+from ..models import AssignmentStatus, CycleStatus, Department, Designation, Division, KpiAssignment, KpiCycle, KpiTemplate, Kra, Role, SystemSetting, TemplateStatus, User
 from ..reset_seed import reset_full_system_data, reset_transactional_data
 from ..sample_files import ensure_samples
 from ..schemas import MasterCreate, ResetIn, SettingsIn, UserCreate, UserOut, UserUpdate
-from ..services import audit
+from ..services import audit, validate_template
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
-admin_roles = require_roles(Role.superadmin, Role.hr)
+admin_roles = require_roles(Role.superadmin)
 superadmin_only = require_roles(Role.superadmin)
 
 
@@ -29,7 +29,9 @@ def _commit_or_conflict(db: Session, message: str):
 
 
 @router.get("/masters")
-def masters(db: Session = Depends(get_db), _=Depends(admin_roles)):
+def masters(db: Session = Depends(get_db), user=Depends(get_current_user)):
+    if not (has_tab_permission(user, "employees", edit=True) or has_tab_permission(user, "templates")):
+        raise HTTPException(403, "You do not have access to organization masters")
     divisions = db.scalars(
         select(Division)
         .options(joinedload(Division.departments).joinedload(Department.designations))
@@ -53,7 +55,7 @@ def masters(db: Session = Depends(get_db), _=Depends(admin_roles)):
 
 
 @router.post("/divisions")
-def add_division(payload: MasterCreate, db: Session = Depends(get_db), user=Depends(admin_roles)):
+def add_division(payload: MasterCreate, db: Session = Depends(get_db), user=Depends(require_tab_permission("employees", edit=True))):
     obj = Division(name=payload.name.strip())
     db.add(obj)
     db.flush()
@@ -63,7 +65,7 @@ def add_division(payload: MasterCreate, db: Session = Depends(get_db), user=Depe
 
 
 @router.post("/departments")
-def add_department(payload: MasterCreate, db: Session = Depends(get_db), user=Depends(admin_roles)):
+def add_department(payload: MasterCreate, db: Session = Depends(get_db), user=Depends(require_tab_permission("employees", edit=True))):
     parent_id = payload.parent_id
     if not parent_id:
         div = db.scalar(select(Division).order_by(Division.id))
@@ -83,7 +85,7 @@ def add_department(payload: MasterCreate, db: Session = Depends(get_db), user=De
 
 
 @router.post("/designations")
-def add_designation(payload: MasterCreate, db: Session = Depends(get_db), user=Depends(admin_roles)):
+def add_designation(payload: MasterCreate, db: Session = Depends(get_db), user=Depends(require_tab_permission("employees", edit=True))):
     parent_id = payload.parent_id
     if not parent_id:
         dep = db.scalar(select(Department).order_by(Department.id))
@@ -108,10 +110,10 @@ def add_designation(payload: MasterCreate, db: Session = Depends(get_db), user=D
 
 
 @router.get("/users")
-def list_users(db: Session = Depends(get_db), _=Depends(get_current_user)):
+def list_users(db: Session = Depends(get_db), _=Depends(require_tab_permission("employees"))):
     users = db.scalars(
         select(User)
-        .options(joinedload(User.designation).joinedload(Designation.department).joinedload(Department.division))
+        .options(joinedload(User.designation).joinedload(Designation.department).joinedload(Department.division), joinedload(User.kpi_template))
         .order_by(User.name)
     ).all()
     manager_names = {u.id: u.name for u in users}
@@ -131,6 +133,10 @@ def list_users(db: Session = Depends(get_db), _=Depends(get_current_user)):
     ).all()
 
     def find_template(u):
+        if u.role == Role.superadmin:
+            return None
+        if u.kpi_template:
+            return u.kpi_template.name
         if u.id in user_templates:
             return user_templates[u.id]
         if u.designation_id:
@@ -154,6 +160,8 @@ def list_users(db: Session = Depends(get_db), _=Depends(get_current_user)):
             "manager_id": u.manager_id,
             "manager": manager_names.get(u.manager_id),
             "designation_id": u.designation_id,
+            "kpi_template_id": None if u.role == Role.superadmin else u.kpi_template_id,
+            "access_permissions": {} if u.role == Role.superadmin else (u.access_permissions or {}),
             "designation": u.designation.name if u.designation else None,
             "department": u.designation.department.name if u.designation else None,
             "division": u.designation.department.division.name if u.designation else None,
@@ -164,8 +172,49 @@ def list_users(db: Session = Depends(get_db), _=Depends(get_current_user)):
     ]
 
 
+def _validate_employee_template(db: Session, template_id: int | None):
+    if not template_id:
+        return None
+    template = db.scalar(
+        select(KpiTemplate)
+        .where(KpiTemplate.id == template_id)
+        .options(joinedload(KpiTemplate.kras).joinedload(Kra.items))
+    )
+    if not template:
+        raise HTTPException(404, "KPI template not found")
+    if template.status != TemplateStatus.active:
+        raise HTTPException(400, "Only active KPI templates can be assigned to an employee")
+    valid, message = validate_template(template, strict=True)
+    if not valid:
+        raise HTTPException(400, f"This KPI template cannot be assigned: {message}")
+    return template
+
+
+def _sync_open_cycle_assignments(db: Session, employee: User, template: KpiTemplate | None):
+    """Create or update editable assignments so the employee immediately receives the chosen form."""
+    if not template:
+        return 0
+    cycles = db.scalars(select(KpiCycle).where(KpiCycle.status != CycleStatus.closed)).all()
+    changed = 0
+    for cycle in cycles:
+        assignment = db.scalar(select(KpiAssignment).where(KpiAssignment.cycle_id == cycle.id, KpiAssignment.user_id == employee.id))
+        if not assignment:
+            db.add(KpiAssignment(cycle_id=cycle.id, user_id=employee.id, template_id=template.id, status=AssignmentStatus.not_started))
+            changed += 1
+        elif assignment.status in {AssignmentStatus.not_started, AssignmentStatus.draft} and assignment.template_id != template.id:
+            assignment.template_id = template.id
+            changed += 1
+    return changed
+
+
 @router.post("/users", response_model=UserOut)
-def add_user(payload: UserCreate, db: Session = Depends(get_db), actor=Depends(admin_roles)):
+def add_user(payload: UserCreate, db: Session = Depends(get_db), actor=Depends(require_tab_permission("employees", edit=True))):
+    if payload.role == Role.superadmin.value and actor.role != Role.superadmin:
+        raise HTTPException(403, "Only Super Admin can create Super Admin accounts")
+    if actor.role != Role.superadmin and payload.role != Role.employee.value:
+        raise HTTPException(403, "Only Super Admin can assign system roles")
+    if payload.access_permissions and actor.role != Role.superadmin:
+        raise HTTPException(403, "Only Super Admin can grant tab or edit permissions")
     if db.scalar(select(User).where(User.email == payload.email)):
         raise HTTPException(409, "Email already exists")
     emp_no = (payload.employee_no or "").strip()
@@ -185,6 +234,7 @@ def add_user(payload: UserCreate, db: Session = Depends(get_db), actor=Depends(a
         raise HTTPException(404, "Manager not found")
     if payload.designation_id and not db.get(Designation, payload.designation_id):
         raise HTTPException(404, "Designation not found")
+    template = None if role == Role.superadmin else _validate_employee_template(db, payload.kpi_template_id)
     user = User(
         employee_no=emp_no if emp_no else None,
         name=payload.name.strip(),
@@ -193,24 +243,29 @@ def add_user(payload: UserCreate, db: Session = Depends(get_db), actor=Depends(a
         role=role,
         manager_id=payload.manager_id,
         designation_id=payload.designation_id,
+        kpi_template_id=template.id if template else None,
+        access_permissions=payload.access_permissions or {},
     )
     db.add(user)
     db.flush()
     if not user.employee_no:
         user.employee_no = f"EMP-{user.id:04d}"
         db.flush()
-    audit(db, actor.id, "create", "user", user.id, {"email": user.email, "employee_no": user.employee_no})
+    assigned_cycles = _sync_open_cycle_assignments(db, user, template)
+    audit(db, actor.id, "create", "user", user.id, {"email": user.email, "employee_no": user.employee_no, "kpi_template_id": user.kpi_template_id, "open_cycle_assignments": assigned_cycles})
     db.commit()
     db.refresh(user)
     return user
 
 
 @router.patch("/users/{user_id}")
-def update_user(user_id: int, payload: UserUpdate, db: Session = Depends(get_db), actor=Depends(admin_roles)):
+def update_user(user_id: int, payload: UserUpdate, db: Session = Depends(get_db), actor=Depends(require_tab_permission("employees", edit=True))):
     user = db.get(User, user_id)
     if not user:
         raise HTTPException(404, "User not found")
     data = payload.model_dump(exclude_unset=True)
+    if "access_permissions" in data and actor.role != Role.superadmin:
+        raise HTTPException(403, "Only Super Admin can grant tab or edit permissions")
     if "email" in data and data["email"]:
         email_clean = data["email"].strip().lower()
         exist = db.scalar(select(User).where(User.email == email_clean, User.id != user_id))
@@ -228,31 +283,41 @@ def update_user(user_id: int, payload: UserUpdate, db: Session = Depends(get_db)
     elif "password" in data:
         data.pop("password")
     if "role" in data and data["role"]:
-        try:
-            data["role"] = Role(data["role"])
-        except ValueError:
-            r_str = str(data["role"]).lower()
-            if "manager" in r_str or "lead" in r_str or "head" in r_str or "supervisor" in r_str:
-                data["role"] = Role.manager
-            elif "hr" in r_str or "admin" in r_str:
-                data["role"] = Role.hr
-            else:
-                data["role"] = Role.employee
+        if actor.role != Role.superadmin:
+            if data["role"] != user.role.value:
+                raise HTTPException(403, "Only Super Admin can change system roles")
+            data.pop("role")
+        else:
+            try:
+                data["role"] = Role(data["role"])
+            except ValueError:
+                r_str = str(data["role"]).lower()
+                if "manager" in r_str or "lead" in r_str or "head" in r_str or "supervisor" in r_str:
+                    data["role"] = Role.manager
+                elif "hr" in r_str or "admin" in r_str:
+                    data["role"] = Role.hr
+                else:
+                    data["role"] = Role.employee
+    effective_role = data.get("role", user.role)
+    if effective_role == Role.superadmin:
+        data["kpi_template_id"] = None
     if data.get("manager_id") == user_id:
         raise HTTPException(400, "An employee cannot report to themselves")
     if data.get("manager_id") and not db.get(User, data["manager_id"]):
         raise HTTPException(404, "Manager not found")
     if data.get("designation_id") and not db.get(Designation, data["designation_id"]):
         raise HTTPException(404, "Designation not found")
+    template = None if effective_role == Role.superadmin else (_validate_employee_template(db, data.get("kpi_template_id")) if "kpi_template_id" in data else user.kpi_template)
     for key, value in data.items():
         setattr(user, key, value)
-    audit(db, actor.id, "update", "user", user.id, {k: (v.value if isinstance(v, Role) else str(v)) for k, v in data.items()})
+    assigned_cycles = _sync_open_cycle_assignments(db, user, template)
+    audit(db, actor.id, "update", "user", user.id, {**{k: (v.value if isinstance(v, Role) else str(v)) for k, v in data.items()}, "open_cycle_assignments": assigned_cycles})
     db.commit()
     return {"ok": True, "message": f"Employee {user.name} updated successfully"}
 
 
 @router.delete("/users/{user_id}")
-def delete_user(user_id: int, db: Session = Depends(get_db), actor=Depends(admin_roles)):
+def delete_user(user_id: int, db: Session = Depends(get_db), actor=Depends(require_tab_permission("employees", edit=True))):
     if user_id == actor.id:
         raise HTTPException(400, "You cannot delete your own account while logged in")
     user = db.get(User, user_id)

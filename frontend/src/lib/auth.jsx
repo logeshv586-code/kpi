@@ -18,3 +18,10 @@ export function AuthProvider({children}){
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }
 export const useAuth=()=>useContext(AuthContext)
+
+export const canAccessTab = (user, tab, edit = false) => {
+  if (user?.role === 'superadmin') return true
+  const permissions = user?.permissions || {}
+  const allowed = permissions[edit ? 'editable_tabs' : 'tabs'] || (edit ? ['kpi-input'] : ['kpi-input', 'reports'])
+  return allowed.includes('*') || allowed.includes(tab)
+}

@@ -14,6 +14,31 @@ from .models import Role, User
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 ALGORITHM = "HS256"
+DEFAULT_TABS = {"kpi-input", "reports"}
+
+
+def user_permissions(user: User) -> dict:
+    """Return the effective, least-privilege tab permissions for a user."""
+    if user.role == Role.superadmin:
+        return {"tabs": ["*"], "editable_tabs": ["*"]}
+    raw = user.access_permissions or {}
+    tabs = set(raw.get("tabs") or []) | DEFAULT_TABS
+    editable_tabs = set(raw.get("editable_tabs") or []) | {"kpi-input"}
+    return {"tabs": sorted(tabs), "editable_tabs": sorted(editable_tabs)}
+
+
+def has_tab_permission(user: User, tab: str, edit: bool = False) -> bool:
+    permissions = user_permissions(user)
+    allowed = permissions["editable_tabs" if edit else "tabs"]
+    return "*" in allowed or tab in allowed
+
+
+def require_tab_permission(tab: str, edit: bool = False):
+    def checker(user: User = Depends(get_current_user)) -> User:
+        if not has_tab_permission(user, tab, edit):
+            raise HTTPException(status_code=403, detail="You do not have access to this area")
+        return user
+    return checker
 
 
 def hash_password(password: str) -> str:

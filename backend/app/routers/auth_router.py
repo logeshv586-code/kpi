@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
-from ..auth import create_token, get_current_user, verify_password
+from ..auth import create_token, get_current_user, user_permissions, verify_password
 from ..database import get_db
 from ..models import Department, Designation, User
 from ..schemas import LoginIn
@@ -24,6 +24,7 @@ def user_payload(user: User):
         "designation": designation.name if designation else None,
         "department": department.name if department else None,
         "division": division.name if division else None,
+        "permissions": user_permissions(user),
     }
 
 

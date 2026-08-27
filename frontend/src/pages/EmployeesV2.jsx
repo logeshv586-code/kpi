@@ -2,7 +2,7 @@ import {useEffect, useMemo, useState} from 'react'
 import {ArrowDown, ArrowUp, ArrowUpDown, Download, FileUp, KeyRound, Pencil, ShieldAlert, Trash2, UserPlus} from 'lucide-react'
 import {Link} from 'react-router-dom'
 import {api, downloadApiFile, getError} from '../lib/api'
-import {useAuth} from '../lib/auth'
+import {canAccessTab, useAuth} from '../lib/auth'
 import {Card, ErrorBox, Loader, Modal, PageHeader, Status} from '../components/UI'
 
 const columns = [
@@ -27,10 +27,12 @@ const DEFAULT_SYSTEM_ROLES = [
 
 export default function EmployeesV2() {
   const {user} = useAuth()
-  const isAdmin = ['superadmin', 'hr'].includes(user?.role)
+  const isAdmin = canAccessTab(user, 'employees', true)
+  const isSuperAdmin = user?.role === 'superadmin'
 
   const [users, setUsers] = useState(null)
   const [masters, setMasters] = useState([])
+  const [templates, setTemplates] = useState([])
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
 
@@ -64,15 +66,21 @@ export default function EmployeesV2() {
     role: 'employee',
     manager_id: '',
     department_id: '',
-    designation_id: ''
+    designation_id: '',
+    kpi_template_id: '',
+    access_permissions: {tabs: [], editable_tabs: []}
   })
 
   const loadUsers = () => api.get('/admin/users').then(r => setUsers(r.data)).catch(e => setError(getError(e)))
   const loadMasters = () => api.get('/admin/masters').then(r => setMasters(r.data)).catch(e => setError(getError(e)))
+  const loadTemplates = () => api.get('/kpi/templates').then(r => setTemplates(r.data)).catch(e => setError(getError(e)))
 
   useEffect(() => {
     loadUsers()
-    loadMasters()
+    if (isAdmin) {
+      loadMasters()
+      loadTemplates()
+    }
   }, [])
 
   const allSystemRoles = useMemo(() => {
@@ -91,6 +99,7 @@ export default function EmployeesV2() {
   )
   const selectedDepartment = departments.find(d => String(d.id) === String(form.department_id))
   const designations = selectedDepartment ? (selectedDepartment.designations || []) : masters.flatMap(p => p.departments.flatMap(d => d.designations || []))
+  const assignableTemplates = useMemo(() => templates.filter(t => t.status === 'active' && t.validation?.publishable), [templates])
 
   const sortedUsers = useMemo(() => {
     if (!users) return []
@@ -122,7 +131,9 @@ export default function EmployeesV2() {
       role: 'employee',
       manager_id: '',
       department_id: '',
-      designation_id: ''
+      designation_id: '',
+      kpi_template_id: '',
+      access_permissions: {tabs: [], editable_tabs: []}
     })
     setAutoEmail(true)
     setShowModal(true)
@@ -139,7 +150,12 @@ export default function EmployeesV2() {
       role: u.role || 'employee',
       manager_id: u.manager_id ? String(u.manager_id) : '',
       department_id: dep ? String(dep.id) : '',
-      designation_id: u.designation_id ? String(u.designation_id) : ''
+      designation_id: u.designation_id ? String(u.designation_id) : '',
+      kpi_template_id: u.kpi_template_id ? String(u.kpi_template_id) : '',
+      access_permissions: {
+        tabs: u.access_permissions?.tabs || [],
+        editable_tabs: u.access_permissions?.editable_tabs || []
+      }
     })
     setAutoEmail(false)
     setShowModal(true)
@@ -172,8 +188,10 @@ export default function EmployeesV2() {
         email: form.email.trim(),
         role: form.role,
         manager_id: form.manager_id ? Number(form.manager_id) : null,
-        designation_id: form.designation_id ? Number(form.designation_id) : null
+        designation_id: form.designation_id ? Number(form.designation_id) : null,
+        kpi_template_id: form.kpi_template_id ? Number(form.kpi_template_id) : null
       }
+      if (isSuperAdmin) payload.access_permissions = form.access_permissions
       if (form.password) payload.password = form.password
       if (editing) {
         await api.patch(`/admin/users/${editing.id}`, payload)
@@ -197,6 +215,17 @@ export default function EmployeesV2() {
     } catch (e) {
       setError(getError(e))
     }
+  }
+
+  function togglePermission(tab, edit = false) {
+    setForm(current => {
+      const key = edit ? 'editable_tabs' : 'tabs'
+      const existing = new Set(current.access_permissions?.[key] || [])
+      existing.has(tab) ? existing.delete(tab) : existing.add(tab)
+      const next = {...current.access_permissions, [key]: [...existing]}
+      if (edit && !next.tabs?.includes(tab)) next.tabs = [...(next.tabs || []), tab]
+      return {...current, access_permissions: next}
+    })
   }
 
   async function remove(u) {
@@ -328,7 +357,7 @@ export default function EmployeesV2() {
       />
       {!isAdmin ? (
         <div className="helper-strip" style={{marginBottom: '12px'}}>
-          <ShieldAlert size={16} /> HR and Super Admin manage employee profiles. All users can sort the directory.
+          <ShieldAlert size={16} /> You have view-only access to the employee directory.
         </div>
       ) : null}
       <ErrorBox error={error} />
@@ -380,11 +409,15 @@ export default function EmployeesV2() {
                     <td>{u.department || '—'}</td>
                     <td>{u.designation || '—'}</td>
                     <td>
-                      <Link to="/templates">
-                        <span style={{background: '#eff6ff', color: '#1d4ed8', padding: '3px 9px', borderRadius: '6px', fontSize: '0.8rem', fontWeight: 600}}>
-                          {u.kpi_template || 'General KPI Template'}
-                        </span>
-                      </Link>
+                      {u.role === 'superadmin' ? (
+                        <span className="muted">Not required</span>
+                      ) : (
+                        <Link to="/templates">
+                          <span style={{background: '#eff6ff', color: '#1d4ed8', padding: '3px 9px', borderRadius: '6px', fontSize: '0.8rem', fontWeight: 600}}>
+                            {u.kpi_template || 'Automatic template'}
+                          </span>
+                        </Link>
+                      )}
                     </td>
                     <td>{u.manager || '—'}</td>
                     <td>
@@ -468,11 +501,11 @@ export default function EmployeesV2() {
             <label>
               <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
                 <span>System Role</span>
-                <button type="button" className="text-action" style={{padding: 0, fontSize: '0.8rem'}} onClick={() => openQuickModal('system_role')}>
+                {isSuperAdmin ? <button type="button" className="text-action" style={{padding: 0, fontSize: '0.8rem'}} onClick={() => openQuickModal('system_role')}>
                   + Add System Role
-                </button>
+                </button> : null}
               </div>
-              <select value={form.role} onChange={e => setForm({...form, role: e.target.value})}>
+              <select value={form.role} disabled={!isSuperAdmin} onChange={e => setForm({...form, role: e.target.value})}>
                 {allSystemRoles.map(r => (
                   <option key={r.id} value={r.id}>
                     {r.name}
@@ -523,13 +556,49 @@ export default function EmployeesV2() {
               </select>
             </label>
 
+            {form.role !== 'superadmin' ? (
+              <label className="span-2">
+                KPI Template
+                <select
+                  value={form.kpi_template_id}
+                  onChange={e => setForm({...form, kpi_template_id: e.target.value})}
+                >
+                  <option value="">Use automatic department/designation template</option>
+                  {assignableTemplates.map(template => (
+                    <option key={template.id} value={template.id}>
+                      {template.name}{template.department ? ` · ${template.department}` : ''}{template.designation ? ` · ${template.designation}` : ''}
+                    </option>
+                  ))}
+                </select>
+                <span className="cell-help">Assign an active template directly to this employee. It is immediately added to each open KPI cycle for the employee to complete.</span>
+              </label>
+            ) : null}
+
+            {isSuperAdmin && form.role !== 'superadmin' ? (
+              <div className="span-2" style={{border: '1px solid #dbe4f0', borderRadius: '8px', padding: '14px'}}>
+                <strong style={{display: 'block', marginBottom: '4px'}}>Sidebar & edit permissions</strong>
+                <span className="cell-help" style={{display: 'block', marginBottom: '10px'}}>All users already have KPI Input, Reports, and permission to fill their own KPI form. Choose additional sidebar tabs and editing rights for this user.</span>
+                {[
+                  ['employees', 'Employees Directory'],
+                  ['templates', 'KPI Templates']
+                ].map(([tab, label]) => {
+                  const visible = form.access_permissions?.tabs?.includes(tab)
+                  const editable = form.access_permissions?.editable_tabs?.includes(tab)
+                  return <div key={tab} style={{display: 'flex', alignItems: 'center', gap: '18px', padding: '6px 0'}}>
+                    <label style={{display: 'flex', alignItems: 'center', gap: '7px', margin: 0, fontWeight: 600}}><input type="checkbox" checked={visible} onChange={() => togglePermission(tab)}/>{label}</label>
+                    <label style={{display: 'flex', alignItems: 'center', gap: '7px', margin: 0}}><input type="checkbox" checked={editable} onChange={() => togglePermission(tab, true)}/>Allow editing</label>
+                  </div>
+                })}
+              </div>
+            ) : null}
+
             {/* Dropdown 4: Reporting Manager */}
             <label className="span-2">
               <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
                 <span>Reporting Manager</span>
-                <button type="button" className="text-action" style={{padding: 0, fontSize: '0.8rem'}} onClick={() => openQuickModal('manager')}>
+                {isSuperAdmin ? <button type="button" className="text-action" style={{padding: 0, fontSize: '0.8rem'}} onClick={() => openQuickModal('manager')}>
                   + Add Manager
-                </button>
+                </button> : null}
               </div>
               <select value={form.manager_id} onChange={e => setForm({...form, manager_id: e.target.value})}>
                 <option value="">None</option>

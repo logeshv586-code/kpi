@@ -32,3 +32,9 @@ def ensure_schema_upgrades():
         if "employee_no" not in columns:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE users ADD COLUMN employee_no VARCHAR(50)"))
+        if "kpi_template_id" not in columns:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE users ADD COLUMN kpi_template_id INTEGER"))
+        if "access_permissions" not in columns:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE users ADD COLUMN access_permissions JSON"))

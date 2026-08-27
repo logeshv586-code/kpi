@@ -22,11 +22,11 @@ def _visible_assignments(db: Session, user: User):
             joinedload(KpiAssignment.cycle),
         )
     ).all()
-    if user.role == Role.employee:
-        return [a for a in rows if a.user_id == user.id]
+    if user.role == Role.superadmin:
+        return rows
     if user.role == Role.manager:
         return [a for a in rows if a.user_id == user.id or a.user.manager_id == user.id]
-    return rows
+    return [a for a in rows if a.user_id == user.id]
 
 
 @router.get("/summary")
@@ -36,7 +36,7 @@ def summary(db: Session = Depends(get_db), user: User = Depends(get_current_user
     assignments = _visible_assignments(db, user)
     current_cycle = running_cycles[0] if running_cycles else db.scalar(select(KpiCycle).order_by(KpiCycle.month.desc()).limit(1))
     current_assignments = [a for a in assignments if current_cycle and a.cycle_id == current_cycle.id]
-    if user.role in {Role.superadmin, Role.hr}:
+    if user.role == Role.superadmin:
         total_employees = db.scalar(select(func.count(User.id)).where(User.active.is_(True))) or 0
     else:
         visible_people = {a.user_id for a in current_assignments or assignments}
@@ -174,7 +174,7 @@ def monthly_matrix(db: Session = Depends(get_db), user: User = Depends(get_curre
 
 
 def _can_view_user(viewer: User, target: User) -> bool:
-    if viewer.role in {Role.superadmin, Role.hr}:
+    if viewer.role == Role.superadmin:
         return True
     if viewer.role == Role.manager:
         return target.id == viewer.id or target.manager_id == viewer.id

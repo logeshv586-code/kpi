@@ -71,8 +71,13 @@ class User(Base):
     role: Mapped[Role] = mapped_column(Enum(Role), default=Role.employee)
     manager_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     designation_id: Mapped[int | None] = mapped_column(ForeignKey("designations.id"), nullable=True)
+    # An explicit template wins over the hierarchy-derived template for this user.
+    # It lets HR assign a prepared KPI form while creating or editing an employee.
+    kpi_template_id: Mapped[int | None] = mapped_column(ForeignKey("kpi_templates.id"), nullable=True)
+    access_permissions: Mapped[dict] = mapped_column(JSON, default=dict)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     designation = relationship("Designation", back_populates="users")
+    kpi_template = relationship("KpiTemplate", foreign_keys=[kpi_template_id])
     manager = relationship("User", remote_side=[id], backref="direct_reports")
 
 

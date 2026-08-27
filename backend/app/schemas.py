@@ -23,6 +23,8 @@ class UserOut(BaseModel):
     role: str
     manager_id: int | None = None
     designation_id: int | None = None
+    kpi_template_id: int | None = None
+    access_permissions: dict | None = None
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -34,6 +36,8 @@ class UserCreate(BaseModel):
     role: str = "employee"
     manager_id: int | None = None
     designation_id: int | None = None
+    kpi_template_id: int | None = None
+    access_permissions: dict | None = None
 
     @field_validator("email")
     @classmethod
@@ -52,6 +56,8 @@ class UserUpdate(BaseModel):
     role: str | None = None
     manager_id: int | None = None
     designation_id: int | None = None
+    kpi_template_id: int | None = None
+    access_permissions: dict | None = None
     active: bool | None = None
 
 

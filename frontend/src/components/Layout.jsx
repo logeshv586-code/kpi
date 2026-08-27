@@ -1,6 +1,6 @@
 import {NavLink, useNavigate} from 'react-router-dom'
 import {BarChart3, FileInput, FileSpreadsheet, HelpCircle, LogOut, Settings as SettingsIcon, Users} from 'lucide-react'
-import {useAuth} from '../lib/auth'
+import {canAccessTab, useAuth} from '../lib/auth'
 
 const coreNavigation = [
   ['/reports', BarChart3, 'Reports'],
@@ -9,16 +9,10 @@ const coreNavigation = [
   ['/kpi-input', FileInput, 'KPI Input'],
   ['/settings', SettingsIcon, 'Settings & Reset Data']
 ]
-const adminNavigation = coreNavigation
-const managerNavigation = coreNavigation
-const employeeNavigation = coreNavigation
-
 export default function Layout({children}) {
   const {user, logout} = useAuth()
   const nav = useNavigate()
-  const isAdmin = ['superadmin', 'hr'].includes(user?.role)
-  const isManager = user?.role === 'manager'
-  const navigation = isAdmin ? adminNavigation : isManager ? managerNavigation : employeeNavigation
+  const navigation = coreNavigation.filter(([to]) => canAccessTab(user, to.slice(1)))
 
   function help() {
     localStorage.removeItem('kpi_guide_dismissed')

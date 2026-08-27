@@ -9,7 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
-from ..auth import get_current_user, require_roles
+from ..auth import get_current_user, has_tab_permission, require_roles, require_tab_permission
 from ..database import get_db, settings
 from ..mail import send_email
 from ..file_storage import TEMPLATE_EXTENSIONS, parse_response_rows, parse_template_rows, save_upload, upload_metadata
@@ -35,7 +35,7 @@ from ..schemas import AssignmentIn, AutoAssignIn, CycleIn, CycleUpdate, ReopenIn
 from ..services import audit, calculate_achievement_percent, item_config, recalc_assignment, validate_template
 
 router = APIRouter(prefix="/api/kpi", tags=["kpi"])
-admin_roles = require_roles(Role.superadmin, Role.hr)
+admin_roles = require_roles(Role.superadmin)
 review_roles = require_roles(Role.superadmin, Role.hr, Role.manager)
 
 
@@ -73,6 +73,16 @@ def _template_matches_employee(template: KpiTemplate, employee: User):
 
 def _template_scope_rank(template: KpiTemplate):
     return (bool(template.designation_id), bool(template.department_id), bool(template.division_id))
+
+
+def _employee_template_override(db: Session, employee: User):
+    """Return the template explicitly selected on an employee, when still usable."""
+    if not employee.kpi_template_id:
+        return None
+    template = _load_template(db, employee.kpi_template_id)
+    if not template or template.status != TemplateStatus.active:
+        return None
+    return template if validate_template(template, strict=True)[0] else None
 
 
 def template_json(t: KpiTemplate):
@@ -142,7 +152,7 @@ def _load_assignment(db: Session, assignment_id: int):
 
 
 def _can_view_assignment(user: User, a: KpiAssignment):
-    if user.role in {Role.superadmin, Role.hr}:
+    if user.role == Role.superadmin:
         return True
     if user.role == Role.manager:
         return a.user_id == user.id or a.user.manager_id == user.id
@@ -160,7 +170,9 @@ def _notify(user: User | None, subject: str, body: str):
 
 
 @router.get("/templates")
-def templates(db: Session = Depends(get_db), _=Depends(get_current_user)):
+def templates(db: Session = Depends(get_db), user=Depends(get_current_user)):
+    if not (has_tab_permission(user, "templates") or has_tab_permission(user, "employees", edit=True)):
+        raise HTTPException(403, "You do not have access to KPI templates")
     items = db.scalars(
         select(KpiTemplate)
         .options(joinedload(KpiTemplate.division), joinedload(KpiTemplate.department), joinedload(KpiTemplate.designation), joinedload(KpiTemplate.kras).joinedload(Kra.items))
@@ -170,7 +182,7 @@ def templates(db: Session = Depends(get_db), _=Depends(get_current_user)):
 
 
 @router.post("/templates")
-def create_template(payload: TemplateIn, db: Session = Depends(get_db), user=Depends(admin_roles)):
+def create_template(payload: TemplateIn, db: Session = Depends(get_db), user=Depends(require_tab_permission("templates", edit=True))):
     _validate_scope(payload, db)
     t = KpiTemplate(name=payload.name.strip(), division_id=payload.division_id, department_id=payload.department_id, designation_id=payload.designation_id, status=TemplateStatus.draft)
     db.add(t)
@@ -193,7 +205,7 @@ def create_template(payload: TemplateIn, db: Session = Depends(get_db), user=Dep
 
 
 @router.put("/templates/{template_id}")
-def update_template(template_id: int, payload: TemplateIn, db: Session = Depends(get_db), user=Depends(admin_roles)):
+def update_template(template_id: int, payload: TemplateIn, db: Session = Depends(get_db), user=Depends(require_tab_permission("templates", edit=True))):
     t = _load_template(db, template_id)
     if not t:
         raise HTTPException(404, "Template not found")
@@ -223,7 +235,7 @@ def update_template(template_id: int, payload: TemplateIn, db: Session = Depends
 
 
 @router.post("/templates/{template_id}/unpublish")
-def unpublish_template(template_id: int, db: Session = Depends(get_db), user=Depends(admin_roles)):
+def unpublish_template(template_id: int, db: Session = Depends(get_db), user=Depends(require_tab_permission("templates", edit=True))):
     """Move an active template back to draft so HR can edit it."""
     t = _load_template(db, template_id)
     if not t:
@@ -235,7 +247,7 @@ def unpublish_template(template_id: int, db: Session = Depends(get_db), user=Dep
 
 
 @router.delete("/templates/{template_id}")
-def delete_template(template_id: int, db: Session = Depends(get_db), user=Depends(admin_roles)):
+def delete_template(template_id: int, db: Session = Depends(get_db), user=Depends(require_tab_permission("templates", edit=True))):
     """Remove a template and any associated assignments cleanly."""
     t = _load_template(db, template_id)
     if not t:
@@ -252,7 +264,7 @@ def delete_template(template_id: int, db: Session = Depends(get_db), user=Depend
 
 
 @router.post("/templates/import-csv")
-def import_template_csv(payload: TemplateImportIn, db: Session = Depends(get_db), user=Depends(admin_roles)):
+def import_template_csv(payload: TemplateImportIn, db: Session = Depends(get_db), user=Depends(require_tab_permission("templates", edit=True))):
     """Import a KRA/KPI CSV into an editable draft template.
 
     Expected columns are flexible but ``KRA`` and ``KPI`` are preferred. A KPI
@@ -340,7 +352,7 @@ async def import_template_excel(
     name: str = Form(...),
     designation_id: int | None = Form(None),
     db: Session = Depends(get_db),
-    user=Depends(admin_roles),
+    user=Depends(require_tab_permission("templates", edit=True)),
 ):
     saved = await save_upload(file, TEMPLATE_EXTENSIONS)
     rows = parse_template_rows(Path(saved["path"]))
@@ -361,7 +373,7 @@ async def import_template_excel(
 
 
 @router.post("/templates/{template_id}/publish")
-def publish(template_id: int, db: Session = Depends(get_db), user=Depends(admin_roles)):
+def publish(template_id: int, db: Session = Depends(get_db), user=Depends(require_tab_permission("templates", edit=True))):
     t = _load_template(db, template_id)
     if not t:
         raise HTTPException(404, "Template not found")
@@ -404,7 +416,7 @@ def publish(template_id: int, db: Session = Depends(get_db), user=Depends(admin_
 
 
 @router.post("/templates/{template_id}/new-version")
-def new_version(template_id: int, db: Session = Depends(get_db), user=Depends(admin_roles)):
+def new_version(template_id: int, db: Session = Depends(get_db), user=Depends(require_tab_permission("templates", edit=True))):
     old = _load_template(db, template_id)
     if not old:
         raise HTTPException(404, "Template not found")
@@ -489,11 +501,13 @@ def assign(payload: AssignmentIn, db: Session = Depends(get_db), actor=Depends(a
     cycle = db.get(KpiCycle, payload.cycle_id)
     if not employee:
         raise HTTPException(404, "Employee not found")
+    if employee.role == Role.superadmin:
+        raise HTTPException(400, "Super Admin accounts do not receive KPI assignments")
     if not cycle:
         raise HTTPException(404, "Cycle not found")
     if cycle.status == CycleStatus.closed:
         raise HTTPException(409, "Cannot assign KPI to a closed cycle")
-    if not _template_matches_employee(template, employee):
+    if employee.kpi_template_id != template.id and not _template_matches_employee(template, employee):
         raise HTTPException(400, "Template hierarchy does not match this employee")
     a = KpiAssignment(**payload.model_dump())
     db.add(a)
@@ -540,8 +554,10 @@ def auto_assign(payload: AutoAssignIn, db: Session = Depends(get_db), actor=Depe
         existing = db.scalar(select(KpiAssignment).where(KpiAssignment.cycle_id == cycle.id, KpiAssignment.user_id == employee.id))
         if existing:
             skipped.append(employee.name); continue
-        matching = [t for t in by_scope.values() if _template_matches_employee(t, employee)]
-        template = max(matching, key=_template_scope_rank) if matching else None
+        template = _employee_template_override(db, employee)
+        if not template:
+            matching = [t for t in by_scope.values() if _template_matches_employee(t, employee)]
+            template = max(matching, key=_template_scope_rank) if matching else None
         if not template:
             no_template.append(employee.name); continue
         a = KpiAssignment(cycle_id=cycle.id, user_id=employee.id, template_id=template.id)
@@ -580,6 +596,8 @@ def _auto_assign_user_on_access(db: Session, user: User):
         return
 
     for u in target_users:
+        if u.role == Role.superadmin:
+            continue
         emp = db.scalar(select(User).where(User.id == u.id).options(joinedload(User.designation).joinedload(Designation.department).joinedload(Department.division)))
         if not emp:
             continue
@@ -587,8 +605,10 @@ def _auto_assign_user_on_access(db: Session, user: User):
             existing = db.scalar(select(KpiAssignment).where(KpiAssignment.cycle_id == cycle.id, KpiAssignment.user_id == u.id))
             if existing:
                 continue
-            matching = [t for t in templates if _template_matches_employee(t, emp)]
-            best_template = max(matching, key=_template_scope_rank) if matching else templates[0]
+            best_template = _employee_template_override(db, emp)
+            if not best_template:
+                matching = [t for t in templates if _template_matches_employee(t, emp)]
+                best_template = max(matching, key=_template_scope_rank) if matching else templates[0]
             if best_template and best_template.kras:
                 a = KpiAssignment(cycle_id=cycle.id, user_id=u.id, template_id=best_template.id, status=AssignmentStatus.draft)
                 db.add(a)
