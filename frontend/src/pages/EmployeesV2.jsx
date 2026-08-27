@@ -1,7 +1,7 @@
 import {useEffect,useMemo,useState} from 'react'
-import {ArrowDown,ArrowUp,ArrowUpDown,FileUp,KeyRound,Pencil,ShieldAlert,Trash2,UserPlus} from 'lucide-react'
+import {ArrowDown,ArrowUp,ArrowUpDown,Download,FileUp,KeyRound,Pencil,ShieldAlert,Trash2,UserPlus} from 'lucide-react'
 import {Link} from 'react-router-dom'
-import {api,getError} from '../lib/api'
+import {api,downloadApiFile,getError} from '../lib/api'
 import {useAuth} from '../lib/auth'
 import {Card,ErrorBox,Loader,Modal,PageHeader,Status} from '../components/UI'
 
@@ -61,10 +61,11 @@ export default function EmployeesV2(){
     if(!form.department_id||!quickRole.trim())return
     try{const{data}=await api.post('/admin/designations',{name:quickRole.trim(),parent_id:Number(form.department_id)});await loadMasters();setForm(f=>({...f,designation_id:String(data.id)}));setQuickRole('');setQuickRoleOpen(false)}catch(e){setError(getError(e))}
   }
+  async function downloadEmployeeSample(){try{await downloadApiFile('/admin/samples/employees','Employee_Import_Sample.xlsx')}catch(e){setError(getError(e))}}
   async function importEmployees(){
     if(!importFile){setError('Choose an Excel or CSV file first.');return}
     setBusy(true)
-    try{const fd=new FormData();fd.append('file',importFile);fd.append('preview','false');const{data}=await api.post('/admin/import-employees-excel',fd,{headers:{'Content-Type':'multipart/form-data'}});setMessage(`Imported ${data.created} employee(s); ${data.skipped} skipped.`);setImportOpen(false);setImportFile(null);loadUsers()}catch(e){setError(getError(e))}finally{setBusy(false)}
+    try{const fd=new FormData();fd.append('file',importFile);fd.append('preview','false');const{data}=await api.post('/admin/import-employees-excel-v2',fd,{headers:{'Content-Type':'multipart/form-data'}});setMessage(`Imported ${data.created} employee(s); ${data.skipped} skipped.`);setImportOpen(false);setImportFile(null);loadUsers()}catch(e){setError(getError(e))}finally{setBusy(false)}
   }
 
   return<>
@@ -77,6 +78,6 @@ export default function EmployeesV2(){
 
     {quickRoleOpen?<Modal title="Add Designation / Role" onClose={()=>setQuickRoleOpen(false)} actions={<><button className="secondary" onClick={()=>setQuickRoleOpen(false)}>Cancel</button><button className="primary" onClick={addRole} disabled={!quickRole.trim()}>Add Role</button></>}><label>Role name<input autoFocus value={quickRole} onChange={e=>setQuickRole(e.target.value)} placeholder="e.g. Senior Developer"/></label></Modal>:null}
 
-    {importOpen?<Modal title="Import Employees" onClose={()=>setImportOpen(false)} actions={<><button className="secondary" onClick={()=>setImportOpen(false)}>Cancel</button><button className="primary" disabled={busy} onClick={importEmployees}>{busy?'Importing...':'Import file'}</button></>}><p className="muted small-copy">Upload Excel or CSV with employee details. Department/designation mapping is handled from the file data.</p><input type="file" accept=".xlsx,.xls,.csv" onChange={e=>setImportFile(e.target.files?.[0]||null)}/></Modal>:null}
+    {importOpen?<Modal title="Import Employees" onClose={()=>setImportOpen(false)} actions={<><button className="secondary" onClick={()=>setImportOpen(false)}>Cancel</button><button className="primary" disabled={busy} onClick={importEmployees}>{busy?'Importing...':'Import file'}</button></>}><p className="muted small-copy">Use the same headings as the Add Employee screen: Employee No / Unique ID, Full Name, Email, Temporary Password, System Role, Department, Designation / Role and Reporting Manager Email.</p><button type="button" className="secondary" onClick={downloadEmployeeSample} style={{marginBottom:'12px'}}><Download size={16}/>Download current Employee Excel format</button><input type="file" accept=".xlsx,.xls,.csv" onChange={e=>setImportFile(e.target.files?.[0]||null)}/></Modal>:null}
   </>
 }
