@@ -19,7 +19,7 @@ def _save(name: str, headers: list[str], rows: list[list[object]]) -> Path:
         cell.fill = PatternFill("solid", fgColor="EAF2FF")
     for i, header in enumerate(headers, 1):
         width = max(len(str(header)) + 4, max((len(str(ws.cell(r, i).value or "")) for r in range(2, ws.max_row + 1)), default=0) + 2)
-        ws.column_dimensions[get_column_letter(i)].width = min(width, 42)
+        ws.column_dimensions[get_column_letter(i)].width = min(width, 52)
     ws.freeze_panes = "A2"
     wb.save(path)
     return path
@@ -33,6 +33,7 @@ def ensure_samples() -> dict[str, Path]:
             [
                 ["Invoices raised on time", 96, "All except one invoice was raised on schedule", "invoice-summary.pdf"],
                 ["Payments collected within agreed terms", 91, "Two customer payments carried forward", "collection-report.xlsx"],
+                ["Monthly MIS submitted on time", "Submitted on time", "Custom Dropdown value must match a configured result name", ""],
             ],
         ),
         "employees": _save(
@@ -45,11 +46,35 @@ def ensure_samples() -> dict[str, Path]:
         ),
         "template": _save(
             "KPI_Template_Import_Sample.xlsx",
-            ["KRA", "KRA Weight", "KPI", "KPI Weight", "Input Type", "Target", "Direction", "Frequency", "Measurement", "Evidence Required"],
             [
-                ["Billing & Collection", 25, "Invoices raised on time", 10, "percentage", 100, "higher", "Monthly", "% invoices raised within timeline", "Yes"],
-                ["Billing & Collection", 25, "Payments collected within agreed terms", 15, "percentage", 95, "higher", "Monthly", "% collection within terms", "Yes"],
-                ["Reporting", 75, "Monthly MIS submitted on time", 75, "yesno", "", "higher", "Monthly", "Submit approved MIS by due date", "No"],
+                "KRA",
+                "KRA Weight",
+                "KPI",
+                "KPI Weight",
+                "Input Type",
+                "Target",
+                "Direction",
+                "Frequency",
+                "Measurement",
+                "Custom Dropdown Results",
+                "Evidence Required",
+            ],
+            [
+                ["Billing & Collection", 25, "Invoices raised on time", 10, "percentage", 100, "higher", "Monthly", "% invoices raised within timeline", "", "Yes"],
+                ["Billing & Collection", 25, "Payments collected within agreed terms", 15, "percentage", 95, "higher", "Monthly", "% collection within terms", "", "Yes"],
+                [
+                    "Reporting",
+                    75,
+                    "Monthly MIS submitted on time",
+                    75,
+                    "Custom Dropdown",
+                    "",
+                    "higher",
+                    "Monthly",
+                    "Select the actual MIS submission result",
+                    "Submitted on time=100; Submitted late=60; Not submitted=0",
+                    "No",
+                ],
             ],
         ),
     }
