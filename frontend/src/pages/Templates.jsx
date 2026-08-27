@@ -1,35 +1,28 @@
 import {useEffect, useMemo, useState} from 'react'
-import {Building2, Check, Eye, FileUp, FolderTree, Pencil, Plus, Table, Trash2, Undo2} from 'lucide-react'
+import {Check, Eye, FileUp, FolderTree, Pencil, Plus, Table, Trash2, Undo2} from 'lucide-react'
 import {Link, useNavigate} from 'react-router-dom'
 import {api, getError} from '../lib/api'
 import {useAuth} from '../lib/auth'
 import {Card, ErrorBox, Loader, Modal, PageHeader, Status} from '../components/UI'
 
 export default function Templates(){
-  const {user}=useAuth()
+  const{user}=useAuth()
   const isAdmin=['superadmin','hr'].includes(user?.role)
-  const [rows,setRows]=useState(null)
-  const [masters,setMasters]=useState([])
-  const [error,setError]=useState('')
-  const [message,setMessage]=useState('')
-  const [showImport,setShowImport]=useState(false)
-  const [divisionFilter,setDivisionFilter]=useState('')
-  const [departmentFilter,setDepartmentFilter]=useState('')
-  const [viewMode,setViewMode]=useState('hierarchy')
-  const [previewTemplate,setPreviewTemplate]=useState(null)
-  const [importForm,setImportForm]=useState({name:'Imported KPI Template',designation_id:'',file:null})
+  const[rows,setRows]=useState(null),[masters,setMasters]=useState([]),[error,setError]=useState(''),[message,setMessage]=useState('')
+  const[showImport,setShowImport]=useState(false),[departmentFilter,setDepartmentFilter]=useState(''),[viewMode,setViewMode]=useState('hierarchy'),[previewTemplate,setPreviewTemplate]=useState(null)
+  const[importForm,setImportForm]=useState({name:'Imported KPI Template',designation_id:'',file:null})
   const navigate=useNavigate()
 
-  const designations=useMemo(()=>masters.flatMap(d=>d.departments.flatMap(dep=>dep.designations.map(x=>({...x,label:`${d.name} / ${dep.name} / ${x.name}`})))),[masters])
-  const divisionOptions=useMemo(()=>masters.map(d=>d.name).sort(),[masters])
-  const departmentOptions=useMemo(()=>[...new Set(masters.filter(d=>!divisionFilter||d.name===divisionFilter).flatMap(d=>d.departments.map(dep=>dep.name)))].sort(),[masters,divisionFilter])
+  const departments=useMemo(()=>masters.flatMap(d=>d.departments.map(dep=>({...dep,parent_division_id:d.id}))),[masters])
+  const departmentOptions=useMemo(()=>[...new Set(departments.map(d=>d.name))].sort(),[departments])
+  const designations=useMemo(()=>departments.flatMap(dep=>dep.designations.map(x=>({...x,label:`${dep.name} / ${x.name}`}))),[departments])
 
   const load=()=>Promise.all([api.get('/kpi/templates'),api.get('/admin/masters')]).then(([r,m])=>{setRows(r.data);setMasters(m.data)}).catch(e=>setError(getError(e)))
   useEffect(()=>{load()},[])
   useEffect(()=>{document.body.classList.add('templates-page');return()=>document.body.classList.remove('templates-page')},[])
 
   async function publish(id){try{setError('');setMessage('');await api.post(`/kpi/templates/${id}/publish`);setMessage('Template published and ready for assignment.');load()}catch(e){setError(getError(e))}}
-  async function newVersion(id){try{setError('');const {data}=await api.post(`/kpi/templates/${id}/new-version`);navigate(`/templates/new?edit=${data.id}`)}catch(e){setError(getError(e))}}
+  async function newVersion(id){try{setError('');const{data}=await api.post(`/kpi/templates/${id}/new-version`);navigate(`/templates/new?edit=${data.id}`)}catch(e){setError(getError(e))}}
   async function editTarget(t){if(t.status==='draft'){navigate(`/templates/new?edit=${t.id}`);return}await newVersion(t.id)}
   async function unpublish(id){if(!window.confirm('Move this unused published target back to draft?'))return;try{setError('');await api.post(`/kpi/templates/${id}/unpublish`);setMessage('Target unpublished. You can edit it now.');load()}catch(e){setError(getError(e))}}
   async function removeTemplate(id){if(!window.confirm('Remove this template? This is available only when it has no assignments.'))return;try{setError('');await api.delete(`/kpi/templates/${id}`);setMessage('Template removed.');load()}catch(e){setError(getError(e))}}
@@ -40,113 +33,31 @@ export default function Templates(){
     try{
       setError('');setMessage('')
       const ext=importForm.file.name.toLowerCase().split('.').pop();let data
-      if(ext==='csv'){
-        const csv_text=await importForm.file.text()
-        ;({data}=await api.post('/kpi/templates/import-csv',{name:importForm.name,designation_id:importForm.designation_id?Number(importForm.designation_id):null,csv_text}))
-      }else{
-        const fd=new FormData();fd.append('file',importForm.file);fd.append('name',importForm.name);if(importForm.designation_id)fd.append('designation_id',importForm.designation_id)
-        ;({data}=await api.post('/kpi/templates/import-excel',fd,{headers:{'Content-Type':'multipart/form-data'}}))
-      }
-      setMessage(`Imported ${data.kras.length} KRA(s) as a draft. Review before publishing.`)
-      setShowImport(false);setImportForm({name:'Imported KPI Template',designation_id:'',file:null});load()
+      if(ext==='csv'){const csv_text=await importForm.file.text();({data}=await api.post('/kpi/templates/import-csv',{name:importForm.name,designation_id:importForm.designation_id?Number(importForm.designation_id):null,csv_text}))}
+      else{const fd=new FormData();fd.append('file',importForm.file);fd.append('name',importForm.name);if(importForm.designation_id)fd.append('designation_id',importForm.designation_id);({data}=await api.post('/kpi/templates/import-excel',fd,{headers:{'Content-Type':'multipart/form-data'}}))}
+      setMessage(`Imported ${data.kras.length} KRA(s) as a draft. Review before publishing.`);setShowImport(false);setImportForm({name:'Imported KPI Template',designation_id:'',file:null});load()
     }catch(e){setError(getError(e))}
   }
 
-  const visibleRows=useMemo(()=>(rows||[]).filter(t=>(!divisionFilter||t.division===divisionFilter)&&(!departmentFilter||t.department===departmentFilter)),[rows,divisionFilter,departmentFilter])
-
-  // Department is deliberately the first hierarchy level. Division is context only.
+  const visibleRows=useMemo(()=>(rows||[]).filter(t=>!departmentFilter||t.department===departmentFilter),[rows,departmentFilter])
   const departmentGroups=useMemo(()=>{
-    const groups=new Map()
-    visibleRows.forEach(t=>{
-      const depName=t.department||'General Department'
-      const divName=t.division||'Organization-wide'
-      const key=`${depName}::${divName}`
-      if(!groups.has(key))groups.set(key,{key,depName,divName,templates:[]})
-      groups.get(key).templates.push(t)
-    })
-    return [...groups.values()].sort((a,b)=>a.depName.localeCompare(b.depName)||a.divName.localeCompare(b.divName))
+    const groups={}
+    visibleRows.forEach(t=>{const key=t.department||'General Department';if(!groups[key])groups[key]=[];groups[key].push(t)})
+    return Object.entries(groups).sort(([a],[b])=>a.localeCompare(b))
   },[visibleRows])
 
-  function getHierarchyIds(divName,depName){
-    const divObj=masters.find(d=>d.name===divName)
-    const depObj=divObj?.departments.find(dep=>dep.name===depName)
-    return {divId:divObj?.id||'',depId:depObj?.id||''}
-  }
+  function departmentIdByName(name){return departments.find(d=>d.name===name)?.id||''}
 
-  return <>
-    <PageHeader title="KPI Templates & Hierarchy" subtitle="Department-first KPI hierarchy: choose a department, then view or manage its templates and targets." actions={isAdmin?(<><button className="secondary" onClick={()=>setShowImport(v=>!v)}><FileUp size={16}/>Import</button><Link className="primary" to="/templates/new"><Plus size={16}/>Create simple template</Link></>):null}/>
+  return<>
+    <PageHeader title="KPI Templates & Hierarchy" subtitle="Department-first KPI hierarchy. Choose a department, then view or manage its KPI templates." actions={isAdmin?(<><button className="secondary" onClick={()=>setShowImport(v=>!v)}><FileUp size={16}/>Import</button><Link className="primary" to="/templates/new"><Plus size={16}/>Create simple template</Link></>):null}/>
     <ErrorBox error={error}/>{message?<div className="success-box">{message}</div>:null}
 
-    <Card style={{padding:'14px 18px',marginBottom:'16px'}}>
-      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:'14px'}}>
-        <div style={{display:'flex',alignItems:'center',gap:'16px',flexWrap:'wrap'}}>
-          <label style={{display:'flex',alignItems:'center',gap:'8px',fontSize:'0.85rem',fontWeight:600,color:'#334155',margin:0}}>
-            Department
-            <select value={departmentFilter} onChange={e=>setDepartmentFilter(e.target.value)} style={{width:'190px',height:'36px',padding:'6px 10px',fontSize:'0.85rem'}}>
-              <option value="">All departments</option>{departmentOptions.map(x=><option key={x} value={x}>{x}</option>)}
-            </select>
-          </label>
-          <label style={{display:'flex',alignItems:'center',gap:'8px',fontSize:'0.85rem',fontWeight:600,color:'#334155',margin:0}}>
-            Division context
-            <select value={divisionFilter} onChange={e=>{const next=e.target.value;setDivisionFilter(next);if(next&&!masters.find(d=>d.name===next)?.departments.some(dep=>dep.name===departmentFilter))setDepartmentFilter('')}} style={{width:'180px',height:'36px',padding:'6px 10px',fontSize:'0.85rem'}}>
-              <option value="">All divisions</option>{divisionOptions.map(x=><option key={x} value={x}>{x}</option>)}
-            </select>
-          </label>
-        </div>
-        <div style={{display:'flex',alignItems:'center',gap:'8px',background:'#f8fafc',padding:'4px 8px',borderRadius:'8px',border:'1px solid #e2e8f0'}}>
-          <span style={{fontSize:'0.8rem',fontWeight:600,color:'#64748b'}}>View:</span>
-          <button className={viewMode==='hierarchy'?'primary small':'secondary small'} onClick={()=>setViewMode('hierarchy')}><FolderTree size={14}/>Department View</button>
-          <button className={viewMode==='table'?'primary small':'secondary small'} onClick={()=>setViewMode('table')}><Table size={14}/>Table View</button>
-        </div>
-      </div>
-    </Card>
+    <Card style={{padding:'14px 18px',marginBottom:'16px'}}><div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:'14px'}}><label style={{display:'flex',alignItems:'center',gap:'8px',fontSize:'0.85rem',fontWeight:600,color:'#334155',margin:0}}>Department<select value={departmentFilter} onChange={e=>setDepartmentFilter(e.target.value)} style={{width:'200px',height:'36px',padding:'6px 10px',fontSize:'0.85rem'}}><option value="">All departments</option>{departmentOptions.map(x=><option key={x} value={x}>{x}</option>)}</select></label><div style={{display:'flex',alignItems:'center',gap:'8px',background:'#f8fafc',padding:'4px 8px',borderRadius:'8px',border:'1px solid #e2e8f0'}}><span style={{fontSize:'0.8rem',fontWeight:600,color:'#64748b'}}>View:</span><button className={viewMode==='hierarchy'?'primary small':'secondary small'} onClick={()=>setViewMode('hierarchy')}><FolderTree size={14}/>Department View</button><button className={viewMode==='table'?'primary small':'secondary small'} onClick={()=>setViewMode('table')}><Table size={14}/>Table View</button></div></div></Card>
 
     {showImport?<Card className="import-card"><h3>Import a KPI template</h3><p className="muted small-copy">Use the simple columns: KRA, KPI/task, Target, Measurement/how to complete.</p><div className="form-grid"><label>Template name<input value={importForm.name} onChange={e=>setImportForm({...importForm,name:e.target.value})}/></label><label>Designation<select value={importForm.designation_id} onChange={e=>setImportForm({...importForm,designation_id:e.target.value})}><option value="">Any designation</option>{designations.map(x=><option key={x.id} value={x.id}>{x.label}</option>)}</select></label><label>Excel / CSV file<input type="file" accept=".xlsx,.xls,.csv" onChange={e=>setImportForm({...importForm,file:e.target.files?.[0]||null)}/></label></div><div className="footer-actions"><button className="secondary" onClick={()=>setShowImport(false)}>Cancel</button><button className="primary" onClick={importFile}>Import as draft</button></div></Card>:null}
 
-    {!rows?<Loader/>:viewMode==='hierarchy'?(
-      <div className="hierarchy-templates-wrap" style={{display:'flex',flexDirection:'column',gap:'16px',marginTop:'16px'}}>
-        {!departmentGroups.length?<Card><div className="empty">No KPI templates found for this department filter.</div></Card>:
-          departmentGroups.map(group=>{
-            const {divId,depId}=getHierarchyIds(group.divName,group.depName)
-            return <Card key={group.key} className="department-hierarchy-card" style={{borderRadius:'12px',border:'1px solid #e2e8f0',padding:'18px 20px',boxShadow:'0 1px 3px rgba(15,23,42,0.03)'}}>
-              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'12px',flexWrap:'wrap',borderBottom:'1px solid #e2e8f0',paddingBottom:'12px',marginBottom:'14px'}}>
-                <div style={{display:'flex',alignItems:'center',gap:'10px',flexWrap:'wrap'}}>
-                  <div style={{width:'34px',height:'34px',borderRadius:'8px',background:'#eff6ff',color:'#2563eb',display:'grid',placeItems:'center'}}><FolderTree size={18}/></div>
-                  <div><h2 style={{margin:0,fontSize:'1.12rem',fontWeight:700,color:'#0f172a'}}>{group.depName}</h2><div style={{display:'flex',alignItems:'center',gap:'5px',marginTop:'3px',fontSize:'0.76rem',color:'#64748b'}}><Building2 size={12}/>{group.divName} division</div></div>
-                  <span style={{fontSize:'0.72rem',background:'#eff6ff',padding:'3px 9px',borderRadius:'12px',color:'#1d4ed8',fontWeight:700}}>Department</span>
-                  <span style={{fontSize:'0.72rem',background:'#f1f5f9',padding:'3px 9px',borderRadius:'12px',color:'#475569',fontWeight:600}}>{group.templates.length} template{group.templates.length===1?'':'s'}</span>
-                </div>
-                {isAdmin?<Link className="primary small" to={`/templates/new?division=${divId}&department=${depId}`}><Plus size={13}/>Add template for {group.depName}</Link>:null}
-              </div>
+    {!rows?<Loader/>:viewMode==='hierarchy'?<div className="hierarchy-templates-wrap" style={{display:'flex',flexDirection:'column',gap:'16px',marginTop:'16px'}}>{!departmentGroups.length?<Card><div className="empty">No KPI templates found for this department.</div></Card>:departmentGroups.map(([depName,templates])=><Card key={depName} style={{borderRadius:'12px',padding:'18px 20px'}}><div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'12px',flexWrap:'wrap',borderBottom:'1px solid #e2e8f0',paddingBottom:'12px',marginBottom:'14px'}}><div style={{display:'flex',alignItems:'center',gap:'10px'}}><div style={{width:'34px',height:'34px',borderRadius:'8px',background:'#eff6ff',color:'#2563eb',display:'grid',placeItems:'center'}}><FolderTree size={18}/></div><div><h2 style={{margin:0,fontSize:'1.12rem'}}>{depName}</h2><div className="cell-help">{templates.length} template{templates.length===1?'':'s'}</div></div><span style={{fontSize:'0.72rem',background:'#eff6ff',padding:'3px 9px',borderRadius:'12px',color:'#1d4ed8',fontWeight:700}}>Department</span></div>{isAdmin?<Link className="primary small" to={`/templates/new?department=${departmentIdByName(depName)}`}><Plus size={13}/>Add template for {depName}</Link>:null}</div><div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(320px,1fr))',gap:'14px'}}>{templates.map(t=><div key={t.id} style={{background:'#fff',borderRadius:'10px',padding:'14px 16px',border:'1px solid #e2e8f0'}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:'8px'}}><h4 style={{margin:0,fontSize:'0.95rem'}}>{t.name}</h4><Status value={t.status}/></div><div style={{fontSize:'0.78rem',color:'#64748b',marginTop:'6px'}}>Scope: <b>{[t.department,t.designation].filter(Boolean).join(' / ')||depName}</b></div><div style={{display:'flex',gap:'12px',fontSize:'0.78rem',color:'#475569',marginTop:'10px',background:'#f8fafc',padding:'6px 10px',borderRadius:'6px'}}><span><b>{t.kras.length}</b> sections</span><span className={Math.abs(Number(t.total_weight)-100)<0.001?'good-text':'bad-text'}><b>{t.total_weight}</b>/100 marks</span></div><div className="row-actions" style={{marginTop:'14px',paddingTop:'10px',borderTop:'1px dashed #e2e8f0'}}><button className="secondary small" onClick={()=>setPreviewTemplate(t)}><Eye size={13}/>View</button>{isAdmin?<><button className="secondary small" onClick={()=>editTarget(t)}><Pencil size={13}/>{t.status==='active'?'Edit target':'Edit'}</button>{t.status==='draft'?<button className="primary small" disabled={!t.validation?.publishable} onClick={()=>publish(t.id)}><Check size={13}/>Publish</button>:null}{t.status==='active'?<button className="secondary small" onClick={()=>unpublish(t.id)}><Undo2 size={13}/>Unpublish</button>:null}<button className="icon-button danger" onClick={()=>removeTemplate(t.id)}><Trash2 size={13}/></button></>:null}</div></div>)}</div></Card>)}</div>:<Card><div className="table-wrap"><table><thead><tr><th>Department</th><th>Template</th><th>Designation</th><th>Sections</th><th>Total marks</th><th>Status</th><th>Actions</th></tr></thead><tbody>{[...visibleRows].sort((a,b)=>(a.department||'').localeCompare(b.department||'')||(a.name||'').localeCompare(b.name||'')).map(t=><tr key={t.id}><td><strong>{t.department||'General Department'}</strong></td><td>{t.name}</td><td>{t.designation||'—'}</td><td>{t.kras.length}</td><td>{t.total_weight}/100</td><td><Status value={t.status}/></td><td><div className="row-actions"><button className="secondary small" onClick={()=>setPreviewTemplate(t)}><Eye size={14}/>View</button>{isAdmin?<button className="secondary small" onClick={()=>editTarget(t)}><Pencil size={14}/>Edit</button>:null}</div></td></tr>)}</tbody></table></div></Card>}
 
-              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(320px,1fr))',gap:'14px'}}>
-                {group.templates.map(t=>{
-                  const scope=[t.department,t.designation].filter(Boolean).join(' / ')||group.depName
-                  return <div key={t.id} className="template-item-card" style={{background:'#fff',borderRadius:'10px',padding:'14px 16px',border:'1px solid #e2e8f0',display:'flex',flexDirection:'column',justifyContent:'space-between',boxShadow:'0 1px 3px rgba(15,23,42,0.04)'}}>
-                    <div>
-                      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:'8px'}}><h4 style={{margin:0,fontSize:'0.95rem',fontWeight:700,color:'#0f172a'}}>{t.name}</h4><Status value={t.status}/></div>
-                      <div style={{fontSize:'0.78rem',color:'#64748b',marginTop:'6px',lineHeight:'1.4'}}>Department scope: <b>{scope}</b></div>
-                      <div style={{display:'flex',gap:'12px',fontSize:'0.78rem',color:'#475569',marginTop:'10px',background:'#f8fafc',padding:'6px 10px',borderRadius:'6px',border:'1px solid #e2e8f0'}}><span><b>{t.kras.length}</b> sections</span><span className={Math.abs(Number(t.total_weight)-100)<0.001?'good-text':'bad-text'}><b>{t.total_weight}</b>/100 marks</span></div>
-                    </div>
-                    <div className="row-actions" style={{marginTop:'14px',paddingTop:'10px',borderTop:'1px dashed #e2e8f0'}}>
-                      <button className="secondary small" onClick={()=>setPreviewTemplate(t)}><Eye size={13}/>View</button>
-                      {isAdmin?<><button className="secondary small" onClick={()=>editTarget(t)}><Pencil size={13}/>{t.status==='active'?'Edit target':'Edit'}</button>{t.status==='draft'?<button className="primary small" disabled={!t.validation?.publishable} onClick={()=>publish(t.id)}><Check size={13}/>Publish</button>:null}{t.status==='active'?<button className="secondary small" onClick={()=>unpublish(t.id)}><Undo2 size={13}/>Unpublish</button>:null}<button className="icon-button danger" aria-label="Remove template" onClick={()=>removeTemplate(t.id)}><Trash2 size={13}/></button></>:null}
-                    </div>
-                  </div>
-                })}
-              </div>
-            </Card>
-          })}
-      </div>
-    ):(
-      <Card><div className="table-wrap"><table><thead><tr><th>Department</th><th>Template</th><th>Division context</th><th>Designation</th><th>Sections</th><th>Total marks</th><th>Status</th><th>Actions</th></tr></thead><tbody>{visibleRows.sort((a,b)=>(a.department||'').localeCompare(b.department||'')||(a.name||'').localeCompare(b.name||'')).map(t=><tr key={t.id}><td><strong>{t.department||'General Department'}</strong></td><td>{t.name}</td><td>{t.division||'Organization-wide'}</td><td>{t.designation||'—'}</td><td>{t.kras.length}</td><td className={Math.abs(Number(t.total_weight)-100)<0.001?'good-text':'bad-text'}>{t.total_weight}/100</td><td><Status value={t.status}/></td><td><div className="row-actions"><button className="secondary small" onClick={()=>setPreviewTemplate(t)}><Eye size={14}/>View</button>{isAdmin?<button className="secondary small" onClick={()=>editTarget(t)}><Pencil size={14}/>Edit</button>:null}</div></td></tr>)}</tbody></table></div>{!visibleRows.length?<div className="empty">No templates for this department yet.</div>:null}</Card>
-    )}
-
-    {previewTemplate?<Modal title={`Template Structure: ${previewTemplate.name}`} onClose={()=>setPreviewTemplate(null)} className="wide-modal" actions={<><button className="secondary" onClick={()=>setPreviewTemplate(null)}>Close</button>{isAdmin?<button className="primary" onClick={()=>{const t=previewTemplate;setPreviewTemplate(null);editTarget(t)}}>Edit Template</button>:null}</>}>
-      <div style={{display:'flex',flexDirection:'column',gap:'12px'}}>
-        <div className="helper-strip"><strong>Department:</strong> {previewTemplate.department||'General Department'} | <strong>Division:</strong> {previewTemplate.division||'Organization-wide'} | <strong>Status:</strong> <Status value={previewTemplate.status}/> | <strong>Total Marks:</strong> {previewTemplate.total_weight}/100</div>
-        {previewTemplate.kras.map((kra,kidx)=><div key={kidx} style={{border:'1px solid #e2e8f0',borderRadius:'6px',padding:'12px',background:'#f8fafc'}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'8px'}}><h4 style={{margin:0,fontWeight:700}}>{kra.name}</h4><span className="weight-chip">{kra.weight} marks</span></div><div className="table-wrap"><table style={{fontSize:'0.85rem'}}><thead><tr><th>#</th><th>KPI Parameter / Task</th><th>Input Type</th><th>Target Value</th><th>Weight</th><th>Measurement / Guidance</th></tr></thead><tbody>{kra.items.map((item,iidx)=><tr key={iidx}><td>{iidx+1}</td><td><strong>{item.question}</strong></td><td><span style={{textTransform:'capitalize'}}>{item.input_type}</span></td><td>{item.target_value!=null?item.target_value:'—'}</td><td>{item.weight} marks</td><td><small>{item.config?.meta?.measurement||'Employee enters actual measurement during KPI Input'}</small></td></tr>)}</tbody></table></div></div>)}
-      </div>
-    </Modal>:null}
+    {previewTemplate?<Modal title={`Template Structure: ${previewTemplate.name}`} onClose={()=>setPreviewTemplate(null)} className="wide-modal" actions={<><button className="secondary" onClick={()=>setPreviewTemplate(null)}>Close</button>{isAdmin?<button className="primary" onClick={()=>{const t=previewTemplate;setPreviewTemplate(null);editTarget(t)}}>Edit Template</button>:null}</>}><div className="helper-strip"><strong>Department:</strong> {previewTemplate.department||'General Department'} | <strong>Status:</strong> <Status value={previewTemplate.status}/> | <strong>Total Marks:</strong> {previewTemplate.total_weight}/100</div>{previewTemplate.kras.map((kra,kidx)=><div key={kidx} style={{border:'1px solid #e2e8f0',borderRadius:'6px',padding:'12px',background:'#f8fafc',marginTop:'12px'}}><div style={{display:'flex',justifyContent:'space-between'}}><h4 style={{margin:0}}>{kra.name}</h4><span className="weight-chip">{kra.weight} marks</span></div><div className="table-wrap" style={{marginTop:'8px'}}><table><thead><tr><th>#</th><th>KPI Parameter / Task</th><th>Input Type</th><th>Target</th><th>Weight</th><th>Measurement</th></tr></thead><tbody>{kra.items.map((item,iidx)=><tr key={iidx}><td>{iidx+1}</td><td><strong>{item.question}</strong></td><td>{item.input_type}</td><td>{item.target_value??'—'}</td><td>{item.weight}</td><td>{item.config?.meta?.measurement||'—'}</td></tr>)}</tbody></table></div></div>)}</Modal>:null}
   </>
 }
