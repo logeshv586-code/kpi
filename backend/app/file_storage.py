@@ -248,20 +248,22 @@ def parse_template_rows(path: Path) -> list[dict[str, Any]]:
     rows = read_table(path)
     result = []
     for row in rows:
-        kra = _get_value(row, "KRA", "Key Result Area", "Goal")
-        kpi = _get_value(row, "KPI", "Key Performance Indicator", "Parameter", "KPI Parameter")
+        kra = _get_value(row, "KRA Name", "KRA", "Key Result Area", "Goal")
+        kpi = _get_value(row, "KPI Name", "KPI", "Key Performance Indicator", "Parameter", "KPI Parameter")
         if kra in (None, "") or kpi in (None, ""):
             continue
         result.append({
             "kra": str(kra).strip(),
             "kpi": str(kpi).strip(),
-            "kra_weight": _get_value(row, "KRA Weight", "KRA Weightage", "KRA %"),
-            "kpi_weight": _get_value(row, "KPI Weight", "Weight", "Weightage", "KPI %"),
-            "measurement": _get_value(row, "Measurement", "Measure", "Instructions"),
-            "target": _get_value(row, "Target", "Target Value"),
+            "kra_weight": _get_value(row, "KRA Weight / Marks", "KRA Weight", "KRA Weightage", "KRA %", "KRA Marks"),
+            "kpi_weight": _get_value(row, "Weight / Marks", "KPI Weight / Marks", "KPI Weight", "Weight", "Weightage", "KPI %"),
+            "task_responsibility": _get_value(row, "Task Responsibility", "Responsibility", "Task / Responsibility"),
+            "measurement": _get_value(row, "Measurement / Guidance", "Measurement", "Measure", "Instructions", "Guidance"),
+            "target": _get_value(row, "Expected Target", "Target", "Target Value"),
+            "unit": _get_value(row, "Unit", "Measurement Unit"),
             "frequency": _get_value(row, "Frequency", "Periodicity"),
-            "input_type": _get_value(row, "Input Type", "Type"),
-            "direction": _get_value(row, "Direction", "Scoring Direction"),
+            "input_type": _get_value(row, "Result Entry Type", "Input Type", "Type"),
+            "direction": _get_value(row, "Scoring Direction", "Direction"),
             "dropdown_results": _get_value(
                 row,
                 "Custom Dropdown Results",
@@ -271,6 +273,9 @@ def parse_template_rows(path: Path) -> list[dict[str, Any]]:
                 "Result Options",
                 "Score Map",
             ),
+            "source": _get_value(row, "Source", "Data Source"),
+            "weight_basis": _get_value(row, "Weight Basis", "Weightage Basis"),
+            # Kept only for backward compatibility with older uploaded sheets.
             "evidence_required": _get_value(row, "Evidence Required", "Require Evidence"),
         })
     return result
