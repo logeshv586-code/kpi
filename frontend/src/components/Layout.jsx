@@ -2,7 +2,7 @@ import {NavLink,useNavigate} from 'react-router-dom'
 import {BarChart3,FileInput,FileSpreadsheet,HelpCircle,LogOut,Network,Users} from 'lucide-react'
 import {useAuth} from '../lib/auth'
 
-const adminNavigation=[['/reports',BarChart3,'Reports'],['/employees',Users,'Employees'],['/templates',FileSpreadsheet,'KPI Templates'],['/hierarchy',Network,'Hierarchy'],['/kpi-input',FileInput,'KPI Input']]
+const adminNavigation=[['/reports',BarChart3,'Reports'],['/employees',Users,'Employees'],['/templates',FileSpreadsheet,'KPI Templates'],['/kpi-input',FileInput,'KPI Input']]
 const employeeNavigation=[['/kpi-input',FileInput,'KPI Input']]
 
 export default function Layout({children}){

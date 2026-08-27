@@ -100,6 +100,18 @@ def history(user_id: int, db: Session = Depends(get_db), user: User = Depends(ge
     ]
 
 
+def _rating_band_label(score: float) -> str:
+    if score >= 90:
+        return "Outstanding"
+    if score >= 80:
+        return "Very Good"
+    if score >= 70:
+        return "Good"
+    if score >= 60:
+        return "Needs Improvement"
+    return "Improvement Required"
+
+
 @router.get("/monthly-matrix")
 def monthly_matrix(db: Session = Depends(get_db), _=Depends(require_roles(Role.superadmin, Role.hr))):
     rows = db.scalars(
@@ -112,20 +124,58 @@ def monthly_matrix(db: Session = Depends(get_db), _=Depends(require_roles(Role.s
     ).all()
     matrix = defaultdict(dict)
     info = {}
-    months = []
+    month_dates = {}
+    user_scores = defaultdict(list)
+
     for a in rows:
+        if not a.cycle or not a.user:
+            continue
         label = a.cycle.month.strftime("%b %Y")
-        if label not in months:
-            months.append(label)
-        division = a.user.designation.department.division.name if a.user.designation else "Corporate"
-        info[a.user_id] = {"employee": a.user.name, "division": division}
-        matrix[a.user_id][label] = a.final_score if a.final_score is not None else a.calculated_score
+        month_dates[label] = a.cycle.month
+        u = a.user
+        des = u.designation
+        dep = des.department if des else None
+        div = dep.division if dep else None
+
+        division_name = div.name if div else "Corporate"
+        department_name = dep.name if dep else "General"
+        designation_name = des.name if des else "Staff"
+
+        info[u.id] = {
+            "employee": u.name,
+            "email": u.email,
+            "division": division_name,
+            "department": department_name,
+            "designation": designation_name,
+        }
+        score_val = float(a.final_score if a.final_score is not None else a.calculated_score)
+        matrix[u.id][label] = score_val
+        user_scores[u.id].append(score_val)
+
+    sorted_months = sorted(month_dates.keys(), key=lambda m: month_dates[m])
+
+    output_rows = []
+    for uid in sorted(info.keys(), key=lambda u: info[u]["employee"]):
+        scores_list = user_scores[uid]
+        overall_avg = round(sum(scores_list) / len(scores_list), 1) if scores_list else 0.0
+        latest_sc = scores_list[-1] if scores_list else 0.0
+        output_rows.append({
+            "user_id": uid,
+            "employee": info[uid]["employee"],
+            "email": info[uid]["email"],
+            "division": info[uid]["division"],
+            "department": info[uid]["department"],
+            "designation": info[uid]["designation"],
+            "total_cycles": len(scores_list),
+            "overall_average": overall_avg,
+            "latest_score": round(latest_sc, 1),
+            "rating_band": _rating_band_label(overall_avg),
+            "scores": matrix[uid],
+        })
+
     return {
-        "months": months,
-        "rows": [
-            {"user_id": uid, "employee": info[uid]["employee"], "division": info[uid]["division"], "scores": matrix[uid]}
-            for uid in info
-        ],
+        "months": sorted_months,
+        "rows": output_rows,
     }
 
 

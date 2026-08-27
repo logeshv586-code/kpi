@@ -1,5 +1,5 @@
 import {useEffect, useMemo, useState} from 'react'
-import {ChevronDown,Equal,Plus,Save,Trash2} from 'lucide-react'
+import {ArrowLeft, ChevronDown, Equal, Plus, Save, Trash2} from 'lucide-react'
 import {useNavigate, useSearchParams} from 'react-router-dom'
 import {api, getError} from '../lib/api'
 import {Card, ErrorBox, PageHeader} from '../components/UI'
@@ -20,9 +20,87 @@ const newItem = (weight=10, choices=defaultChoices, cap=100, evidenceDefault=fal
   choice_map:choiceText(choices), max_rating:5, source:'', weight_basis:'Configured by HR'
 })
 
+const sampleTemplates = {
+  software_developer: {
+    name: "Software Developer Sample Template",
+    kras: [
+      {
+        name: "Delivery & Sprint Tasks",
+        weight: 40,
+        items: [
+          { question: "Assigned development tasks completed on time", task_responsibility: "Complete all assigned sprint tasks within deadline", input_type: "percentage", weight: 25, score_limit: 25, target_value: 100, direction: "higher", frequency: "Monthly", unit: "%", measurement: "Percentage of sprint tasks completed without delay", evidence_required: false, scoring_method: "target_ratio", score_cap_pct: 100, choice_map: choiceText(defaultChoices), max_rating: 5, source: "Engineering Policy", weight_basis: "Configured by HR" },
+          { question: "Code review and technical documentation", task_responsibility: "Submit pull requests with proper tests and documentation", input_type: "percentage", weight: 15, score_limit: 15, target_value: 100, direction: "higher", frequency: "Monthly", unit: "%", measurement: "PR approval rate and technical notes adherence", evidence_required: false, scoring_method: "target_ratio", score_cap_pct: 100, choice_map: choiceText(defaultChoices), max_rating: 5, source: "Engineering Policy", weight_basis: "Configured by HR" }
+        ]
+      },
+      {
+        name: "Quality & System Stability",
+        weight: 40,
+        items: [
+          { question: "Defects and production bug count", task_responsibility: "Minimize post-release defects and resolve assigned bugs within SLA", input_type: "number", weight: 20, score_limit: 20, target_value: 0, direction: "lower", frequency: "Monthly", unit: "count", measurement: "Number of production bugs reported", evidence_required: true, scoring_method: "target_ratio", score_cap_pct: 100, choice_map: choiceText(defaultChoices), max_rating: 5, source: "QA Report", weight_basis: "Configured by HR" },
+          { question: "Unit test coverage & code quality score", task_responsibility: "Maintain automated test coverage for developed services", input_type: "percentage", weight: 20, score_limit: 20, target_value: 80, direction: "higher", frequency: "Monthly", unit: "%", measurement: "SonarQube / test coverage report %", evidence_required: false, scoring_method: "target_ratio", score_cap_pct: 100, choice_map: choiceText(defaultChoices), max_rating: 5, source: "SonarQube", weight_basis: "Configured by HR" }
+        ]
+      },
+      {
+        name: "Team Collaboration & Learning",
+        weight: 20,
+        items: [
+          { question: "Knowledge sharing & continuous improvement", task_responsibility: "Conduct KT sessions and contribute reusable code modules", input_type: "choice", weight: 20, score_limit: 20, target_value: null, direction: "higher", frequency: "Monthly", unit: "", measurement: "Evaluation by Team Lead / Manager", evidence_required: false, scoring_method: "target_ratio", score_cap_pct: 100, choice_map: choiceText(defaultChoices), max_rating: 5, source: "Manager Review", weight_basis: "Configured by HR" }
+        ]
+      }
+    ]
+  },
+  project_manager: {
+    name: "Project Manager Sample Template",
+    kras: [
+      {
+        name: "Project Planning & Delivery",
+        weight: 50,
+        items: [
+          { question: "Milestones completed on schedule", task_responsibility: "Ensure all key project milestones are achieved on time", input_type: "percentage", weight: 25, score_limit: 25, target_value: 100, direction: "higher", frequency: "Monthly", unit: "%", measurement: "Milestone completion rate %", evidence_required: true, scoring_method: "target_ratio", score_cap_pct: 100, choice_map: choiceText(defaultChoices), max_rating: 5, source: "PMO Report", weight_basis: "Configured by HR" },
+          { question: "Deliverables completed within timeline", task_responsibility: "Deliver client artifacts without schedule slippage", input_type: "percentage", weight: 25, score_limit: 25, target_value: 100, direction: "higher", frequency: "Monthly", unit: "%", measurement: "On-time deliverable percentage", evidence_required: false, scoring_method: "target_ratio", score_cap_pct: 100, choice_map: choiceText(defaultChoices), max_rating: 5, source: "PMO Report", weight_basis: "Configured by HR" }
+        ]
+      },
+      {
+        name: "Cost Control & Governance",
+        weight: 50,
+        items: [
+          { question: "Projects within approved budget", task_responsibility: "Prevent cost overrun and manage resource allocation", input_type: "percentage", weight: 25, score_limit: 25, target_value: 100, direction: "higher", frequency: "Monthly", unit: "%", measurement: "Budget adherence %", evidence_required: false, scoring_method: "target_ratio", score_cap_pct: 100, choice_map: choiceText(defaultChoices), max_rating: 5, source: "Finance", weight_basis: "Configured by HR" },
+          { question: "Client & stakeholder satisfaction", task_responsibility: "Maintain strong client relationships and resolve escalations", input_type: "choice", weight: 25, score_limit: 25, target_value: null, direction: "higher", frequency: "Monthly", unit: "", measurement: "Client feedback & escalation log", evidence_required: false, scoring_method: "target_ratio", score_cap_pct: 100, choice_map: choiceText(defaultChoices), max_rating: 5, source: "Client Survey", weight_basis: "Configured by HR" }
+        ]
+      }
+    ]
+  },
+  finance_manager: {
+    name: "Finance Manager Sample Template",
+    kras: [
+      {
+        name: "Billing & Collections",
+        weight: 50,
+        items: [
+          { question: "Invoices raised on time with accuracy", task_responsibility: "Generate customer invoices promptly at milestone triggers", input_type: "percentage", weight: 25, score_limit: 25, target_value: 100, direction: "higher", frequency: "Monthly", unit: "%", measurement: "Invoicing accuracy and timeliness %", evidence_required: true, scoring_method: "target_ratio", score_cap_pct: 100, choice_map: choiceText(defaultChoices), max_rating: 5, source: "Finance Policy", weight_basis: "Configured by HR" },
+          { question: "Collections collected within terms", task_responsibility: "Follow up and collect due payments without overdue aging", input_type: "percentage", weight: 25, score_limit: 25, target_value: 95, direction: "higher", frequency: "Monthly", unit: "%", measurement: "Collection efficiency ratio %", evidence_required: false, scoring_method: "target_ratio", score_cap_pct: 100, choice_map: choiceText(defaultChoices), max_rating: 5, source: "Receivables Log", weight_basis: "Configured by HR" }
+        ]
+      },
+      {
+        name: "Financial Reporting & Audit",
+        weight: 50,
+        items: [
+          { question: "Monthly MIS & financial statements", task_responsibility: "Prepare monthly balance sheet and profit & loss statements", input_type: "percentage", weight: 30, score_limit: 30, target_value: 100, direction: "higher", frequency: "Monthly", unit: "%", measurement: "On-time submission of MIS", evidence_required: true, scoring_method: "target_ratio", score_cap_pct: 100, choice_map: choiceText(defaultChoices), max_rating: 5, source: "Management Policy", weight_basis: "Configured by HR" },
+          { question: "Statutory filings and compliance", task_responsibility: "Ensure GST, TDS, and statutory filings are completed on time", input_type: "percentage", weight: 20, score_limit: 20, target_value: 100, direction: "higher", frequency: "Monthly", unit: "%", measurement: "Zero penalty statutory compliance", evidence_required: false, scoring_method: "target_ratio", score_cap_pct: 100, choice_map: choiceText(defaultChoices), max_rating: 5, source: "Compliance Audit", weight_basis: "Configured by HR" }
+        ]
+      }
+    ]
+  }
+}
+
 export default function TemplateBuilder() {
   const [params] = useSearchParams()
   const editId = params.get('edit')
+  const sampleParam = params.get('sample')
+  const divisionParam = params.get('division')
+  const departmentParam = params.get('department')
+  const designationParam = params.get('designation')
+
   const [masters, setMasters] = useState([])
   const [name, setName] = useState('')
   const [division, setDivision] = useState('')
@@ -41,7 +119,21 @@ export default function TemplateBuilder() {
         setMasters(m.data)
         const defaults={choiceMap:settings.data.default_choice_map||defaultChoices,scoreCap:settings.data.score_cap_pct||100,evidenceDefault:!!settings.data.require_evidence_by_default}
         setOrgDefaults(defaults)
-        if (!editId) setKras([{name:'New KRA',weight:100,items:[newItem(100,defaults.choiceMap,defaults.scoreCap,defaults.evidenceDefault)]}])
+
+        if (divisionParam) setDivision(divisionParam)
+        if (departmentParam) setDepartment(departmentParam)
+        if (designationParam) setDesignation(designationParam)
+
+        if (!editId) {
+          if (sampleParam && sampleTemplates[sampleParam]) {
+            const sampleObj = sampleTemplates[sampleParam]
+            setName(sampleObj.name)
+            setKras(sampleObj.kras)
+          } else {
+            setKras([{name:'New KRA',weight:100,items:[newItem(100,defaults.choiceMap,defaults.scoreCap,defaults.evidenceDefault)]}])
+          }
+        }
+
         if (editId) {
           const found = t.data.find(x => String(x.id) === String(editId))
           if (!found) throw new Error('Template not found')
@@ -52,7 +144,7 @@ export default function TemplateBuilder() {
             items:k.items.map(i => {
               const cfg = i.config || {}; const meta = cfg.meta || {}; const map = cfg.score_map || {}
               return {
-                question:i.question, task_responsibility:meta.task_responsibility || '', input_type:i.input_type, weight:i.weight, score_limit:Number(meta.score_limit ?? i.weight), target_value:i.target_value,
+                question:i.question, task_responsibility:meta.task_responsibility || i.question || 'Complete assigned KPI task', input_type:i.input_type, weight:i.weight, score_limit:Number(meta.score_limit ?? i.weight), target_value:i.target_value,
                 direction:i.direction, frequency:meta.frequency || 'Monthly', unit:meta.unit || (i.input_type==='percentage'?'%':''),
                 measurement:meta.measurement || '', evidence_required:!!meta.evidence_required,
                 scoring_method:meta.scoring_method || 'target_ratio', score_cap_pct:meta.score_cap_pct || 100,
@@ -64,7 +156,7 @@ export default function TemplateBuilder() {
         }
       })
       .catch(e => setError(getError(e)))
-  }, [editId])
+  }, [editId, sampleParam, divisionParam, departmentParam, designationParam])
 
   const total = useMemo(() => Number(kras.reduce((s,k) => s + Number(k.weight || 0), 0).toFixed(2)), [kras])
   const divisions = masters
@@ -88,7 +180,7 @@ export default function TemplateBuilder() {
     const scoreMap = i.input_type === 'yesno' ? parseMap(i.choice_map, yesNoChoices) : i.input_type === 'choice' ? parseMap(i.choice_map, orgDefaults.choiceMap) : {}
     const meta = {
       frequency:i.frequency || 'Monthly', unit:i.unit || '', measurement:i.measurement || '', evidence_required:!!i.evidence_required,
-      scoring_method:i.scoring_method || 'target_ratio', score_cap_pct:i.score_limit != null ? Math.min(100, Number(i.score_limit) / Math.max(1, Number(i.weight || 0)) * 100) : Number(i.score_cap_pct || 100), source:i.source || '', weight_basis:i.weight_basis || 'Configured by HR', task_responsibility:i.task_responsibility || '', score_limit:Number(i.score_limit ?? (i.weight || 0))
+      scoring_method:i.scoring_method || 'target_ratio', score_cap_pct:i.score_limit != null ? Math.min(100, Number(i.score_limit) / Math.max(1, Number(i.weight || 0)) * 100) : Number(i.score_cap_pct || 100), source:i.source || '', weight_basis:i.weight_basis || 'Configured by HR', task_responsibility:(i.task_responsibility || i.question || 'Complete assigned KPI task').trim(), score_limit:Number(i.score_limit ?? (i.weight || 0))
     }
     const options = {score_map:scoreMap, meta}
     if (i.input_type === 'rating') options.max = Number(i.max_rating || 5)
@@ -99,7 +191,6 @@ export default function TemplateBuilder() {
     }
   }
   function validateScoreMap(item) {
-    const map = parseMap(item.choice_map, {})
     const scoreLimit=Number(item.score_limit ?? item.weight)
     if (!Number.isFinite(scoreLimit) || scoreLimit < 0 || scoreLimit > Number(item.weight || 0)) throw new Error(`${item.question || 'KPI'}: score must be between 0 and the weight base`)
   }
@@ -131,7 +222,6 @@ export default function TemplateBuilder() {
         const subtotal = Number(k.items.reduce((s,i)=>s+Number(i.weight||0),0).toFixed(2))
         if (subtotal > Number(k.weight) + 0.001) throw new Error(`${k.name}: KPI weights (${subtotal}) cannot exceed KRA weight (${k.weight})`)
         if (k.items.some(i => !i.question.trim())) throw new Error(`${k.name}: every KPI needs a name`)
-        if (k.items.some(i => !i.task_responsibility.trim())) throw new Error(`${k.name}: add the task responsibility for every KPI`)
         k.items.forEach(validateScoreMap)
       })
       const payload = {name:name.trim(),division_id:division?Number(division):null,department_id:department?Number(department):null,designation_id:designation?Number(designation):null,kras:kras.map(k=>({name:k.name.trim(),weight:Number(k.weight||0),items:k.items.map(normalizeItem)}))}
@@ -141,7 +231,20 @@ export default function TemplateBuilder() {
   }
 
   return <>
-    <PageHeader title={editId ? 'Edit KPI Template' : 'Create KPI Template'} subtitle="Create a simple task list with only the KPI name, responsibility, weight base, measurement and answer type." actions={<button className="secondary" onClick={balanceAll}><Equal size={16}/>Auto-balance marks</button>}/>
+    <PageHeader 
+      title={editId ? 'Edit KPI Template' : 'Create KPI Template'} 
+      subtitle="Create a simple task list with only the KPI name, responsibility, weight base, measurement and answer type." 
+      actions={
+        <div style={{display:'flex',gap:'8px'}}>
+          <button className="secondary" onClick={()=>navigate('/templates')}>
+            <ArrowLeft size={16}/>Back to Templates
+          </button>
+          <button className="secondary" onClick={balanceAll}>
+            <Equal size={16}/>Auto-balance marks
+          </button>
+        </div>
+      }
+    />
     <ErrorBox error={error}/>
     <Card>
       <div className="section-heading"><div><h3>Choose where this KPI applies</h3><p className="muted small-copy">Start with the organization hierarchy. The selected scope controls which employees can receive this template.</p></div></div>
@@ -161,7 +264,7 @@ export default function TemplateBuilder() {
       <div className="helper-strip"><strong>Simple setup:</strong> Add a section, write each task, explain how it is completed, then set the expected target. Advanced scoring is optional.</div>
     </Card>
 
-    <><div className="stack">{kras.map((k,ki)=><Card key={ki}>
+    <div className="stack">{kras.map((k,ki)=><Card key={ki}>
       <div className="kra-title">
         <div className="inline-fields"><input className="title-input" value={k.name} onChange={e=>updateKra(ki,{name:e.target.value})}/><input className="weight-input" type="number" min="0" max="100" step="0.01" value={k.weight} onChange={e=>updateKra(ki,{weight:Number(e.target.value)})}/><span>marks</span></div>
         <div className="row-actions"><button className="secondary small" onClick={()=>balanceItems(ki)}><Equal size={14}/>Balance items</button><button className="icon-button danger" aria-label="Delete KRA" onClick={()=>setKras(current=>current.filter((_,i)=>i!==ki))}><Trash2 size={16}/></button></div>
@@ -190,6 +293,14 @@ export default function TemplateBuilder() {
       <button className="text-action" onClick={()=>updateKra(ki,{items:[...k.items,newItem(10,orgDefaults.choiceMap,orgDefaults.scoreCap,orgDefaults.evidenceDefault)]})}><Plus size={15}/>Add KPI parameter</button>
     </Card>)}</div>
 
-    <div className="footer-actions"><button className="secondary" onClick={()=>setKras(current=>[...current,{name:'New KRA',weight:0,items:[newItem(0,orgDefaults.choiceMap,orgDefaults.scoreCap,orgDefaults.evidenceDefault)]}])}><Plus size={16}/>Add KRA</button><button className="primary" onClick={save}>{editId?'Save draft changes':'Save draft template'}</button></div></>
+    <div className="footer-actions">
+      <button className="secondary" onClick={()=>navigate('/templates')}>Back to Templates</button>
+      <button className="secondary" onClick={()=>setKras(current=>[...current,{name:'New KRA',weight:0,items:[newItem(0,orgDefaults.choiceMap,orgDefaults.scoreCap,orgDefaults.evidenceDefault)]}])}>
+        <Plus size={16}/>Add KRA
+      </button>
+      <button className="primary" onClick={save}>
+        {editId?'Save draft changes':'Save draft template'}
+      </button>
+    </div>
   </>
 }

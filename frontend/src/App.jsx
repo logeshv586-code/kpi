@@ -28,17 +28,17 @@ function Protected() {
   if (!user) return <Navigate to="/login" replace/>
   const home = ['superadmin','hr'].includes(user.role) ? 'reports' : 'kpi-input'
   return <Layout><Routes>
-    <Route path="dashboard" element={<Dashboard/>}/>
+    <Route path="dashboard" element={<Navigate to={`/${home}`} replace/>}/>
     <Route path="kpi-input" element={<KpiInput/>}/>
     <Route path="kpi" element={<MyKpi/>}/>
-    <Route path="kpi-dashboard" element={<KpiDashboard/>}/>
+    <Route path="kpi-dashboard" element={<Navigate to={`/${home}`} replace/>}/>
     <Route path="approvals" element={<RoleGate roles={['superadmin','hr','manager']}><Approvals/></RoleGate>}/>
     <Route path="templates" element={<RoleGate roles={['superadmin','hr']}><Templates/></RoleGate>}/>
     <Route path="templates/new" element={<RoleGate roles={['superadmin','hr']}><TemplateBuilder/></RoleGate>}/>
     <Route path="cycles" element={<RoleGate roles={['superadmin','hr']}><Cycles/></RoleGate>}/>
     <Route path="assignments" element={<RoleGate roles={['superadmin','hr']}><Assignments/></RoleGate>}/>
     <Route path="employees" element={<RoleGate roles={['superadmin','hr']}><Employees/></RoleGate>}/>
-    <Route path="hierarchy" element={<RoleGate roles={['superadmin','hr']}><Hierarchy/></RoleGate>}/>
+    <Route path="hierarchy" element={<Navigate to="/templates" replace/>}/>
     <Route path="reports" element={<RoleGate roles={['superadmin','hr']}><Reports/></RoleGate>}/>
     <Route path="masters" element={<RoleGate roles={['superadmin','hr']}><Masters/></RoleGate>}/>
     <Route path="audit" element={<RoleGate roles={['superadmin','hr']}><Audit/></RoleGate>}/>
