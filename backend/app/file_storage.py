@@ -262,6 +262,15 @@ def parse_template_rows(path: Path) -> list[dict[str, Any]]:
             "frequency": _get_value(row, "Frequency", "Periodicity"),
             "input_type": _get_value(row, "Input Type", "Type"),
             "direction": _get_value(row, "Direction", "Scoring Direction"),
+            "dropdown_results": _get_value(
+                row,
+                "Custom Dropdown Results",
+                "Dropdown Results",
+                "Custom Results",
+                "Choice Options",
+                "Result Options",
+                "Score Map",
+            ),
             "evidence_required": _get_value(row, "Evidence Required", "Require Evidence"),
         })
     return result
