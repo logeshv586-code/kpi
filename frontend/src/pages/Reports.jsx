@@ -1,7 +1,10 @@
 import {useEffect, useMemo, useState} from 'react'
-import {Award, BarChart2, Calendar, Download, TrendingUp, Users} from 'lucide-react'
+import {Award, BarChart2, Calendar, ChevronLeft, ChevronRight, Download, Filter, TrendingUp, Users} from 'lucide-react'
 import {api, getError} from '../lib/api'
-import {Card, ErrorBox, Loader, PageHeader, Score} from '../components/UI'
+import {useAuth} from '../lib/auth'
+import {Card, ErrorBox, Loader, Modal, PageHeader, Score} from '../components/UI'
+
+const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
 function getRatingBand(score) {
   if (score >= 90) return 'Outstanding'
@@ -12,10 +15,25 @@ function getRatingBand(score) {
 }
 
 export default function Reports() {
+  const {user} = useAuth()
   const [data, setData] = useState(null)
   const [division, setDivision] = useState('All')
   const [monthFilter, setMonthFilter] = useState('All')
   const [error, setError] = useState('')
+  const [showMonthModal, setShowMonthModal] = useState(false)
+  const [calYear, setCalYear] = useState(2026)
+
+  const title = ['superadmin','hr'].includes(user?.role) 
+    ? "Performance Reports" 
+    : user?.role === 'manager' 
+    ? "Team Performance Reports" 
+    : "My Performance Report"
+
+  const subtitle = ['superadmin','hr'].includes(user?.role)
+    ? "Monthly & representative performance summaries with interactive month filtering."
+    : user?.role === 'manager'
+    ? "Monthly evaluation scores and progress summaries for your direct reports."
+    : "Your monthly evaluation scores, rating bands, and performance history."
 
   useEffect(() => {
     api.get('/dashboard/monthly-matrix')
@@ -24,7 +42,7 @@ export default function Reports() {
   }, [])
 
   const divisions = useMemo(() => ['All', ...new Set((data?.rows || []).map(r => r.division))], [data])
-  const months = useMemo(() => ['All', ...(data?.months || [])], [data])
+  const availableMonths = useMemo(() => data?.months || [], [data])
 
   const rows = useMemo(() => {
     const raw = (data?.rows || []).filter(r => division === 'All' || r.division === division)
@@ -48,21 +66,34 @@ export default function Reports() {
     if (!validRows.length) return { avg: 0, highCount: 0, total: 0, topDiv: 'N/A' }
     
     const totalScore = validRows.reduce((s, r) => s + getScore(r), 0)
-    const avg = (totalScore / validRows.length).toFixed(1)
+    const avg = roundOne(totalScore / validRows.length)
     const highCount = validRows.filter(r => getScore(r) >= 90).length
-    
+
     const divScores = {}
     validRows.forEach(r => {
-      if (!divScores[r.division]) divScores[r.division] = []
-      divScores[r.division].push(getScore(r))
+      if (r.division) {
+        if (!divScores[r.division]) divScores[r.division] = { total: 0, count: 0 }
+        divScores[r.division].total += getScore(r)
+        divScores[r.division].count += 1
+      }
     })
-    let topDiv = 'N/A', maxAvg = -1
-    Object.entries(divScores).forEach(([d, scores]) => {
-      const dAvg = scores.reduce((a, b) => a + b, 0) / scores.length
-      if (dAvg > maxAvg) { maxAvg = dAvg; topDiv = d }
+    
+    let topDiv = 'N/A'
+    let topDivAvg = -1
+    Object.entries(divScores).forEach(([d, { total, count }]) => {
+      const divAvg = total / count
+      if (divAvg > topDivAvg) {
+        topDivAvg = divAvg
+        topDiv = d
+      }
     })
+
     return { avg, highCount, total: validRows.length, topDiv }
   }, [rows, monthFilter])
+
+  function roundOne(val) {
+    return Math.round(val * 10) / 10
+  }
 
   function exportCsv() {
     if (!data || !rows.length) return
@@ -96,22 +127,46 @@ export default function Reports() {
     return 'status-draft'
   }
 
+  function selectMonth(label) {
+    setMonthFilter(label)
+    setShowMonthModal(false)
+  }
+
   return <>
     <PageHeader 
-      title="Performance Reports" 
-      subtitle="Monthly & representative performance summaries with interactive month filtering." 
+      title={title} 
+      subtitle={subtitle} 
       actions={
         <div style={{display:'flex',alignItems:'center',gap:'10px',flexWrap:'nowrap'}}>
-          <div style={{display:'flex',alignItems:'center',gap:'6px',background:'#ffffff',padding:'4px 8px',borderRadius:'8px',border:'1px solid #dbe2ea'}}>
-            <Calendar size={15} style={{color:'#64748b'}}/>
-            <select value={monthFilter} onChange={e => setMonthFilter(e.target.value)} style={{border:'0',padding:'4px 0',outline:'none',background:'transparent',fontSize:'0.85rem',fontWeight:600}}>
-              <option value="All">All Months (Overall)</option>
-              {(data?.months || []).map(m => <option key={m} value={m}>{m}</option>)}
+          {/* Interactive Calendar Month Picker Button */}
+          <button 
+            type="button" 
+            onClick={() => setShowMonthModal(true)} 
+            style={{
+              display:'inline-flex',
+              alignItems:'center',
+              gap:'8px',
+              background:'#ffffff',
+              border:'1px solid #cbd5e1',
+              padding:'6px 12px',
+              borderRadius:'8px',
+              fontSize:'0.85rem',
+              fontWeight:650,
+              color:'#0f172a',
+              cursor:'pointer',
+              boxShadow:'0 1px 2px rgba(15,23,42,0.05)'
+            }}
+          >
+            <Calendar size={16} style={{color:'#2563eb'}}/>
+            <span>{monthFilter === 'All' ? 'All Months (Overall)' : monthFilter}</span>
+          </button>
+
+          {divisions.length > 2 ? (
+            <select value={division} onChange={e => setDivision(e.target.value)} style={{maxWidth:'180px'}}>
+              {divisions.map(d => <option key={d}>{d}</option>)}
             </select>
-          </div>
-          <select value={division} onChange={e => setDivision(e.target.value)} style={{maxWidth:'180px'}}>
-            {divisions.map(d => <option key={d}>{d}</option>)}
-          </select>
+          ) : null}
+
           <button className="secondary" onClick={exportCsv} style={{whiteSpace:'nowrap'}}>
             <Download size={16}/>Export CSV
           </button>
@@ -136,68 +191,142 @@ export default function Reports() {
         </Card>
         <Card>
           <div style={{display:'flex',alignItems:'center',gap:'8px',marginBottom:'4px',color:'var(--color-muted,#64748b)'}}>
-            <Users size={16}/><span>Evaluated Employees</span>
+            <Users size={16}/><span>Evaluated Records</span>
           </div>
           <strong className="small-metric">{metrics.total}</strong>
         </Card>
         <Card>
           <div style={{display:'flex',alignItems:'center',gap:'8px',marginBottom:'4px',color:'var(--color-muted,#64748b)'}}>
-            <TrendingUp size={16}/><span>Top Performing Division</span>
+            <TrendingUp size={16}/><span>Top Division</span>
           </div>
-          <strong className="small-metric" style={{fontSize:'1rem'}}>{metrics.topDiv}</strong>
+          <strong className="small-metric" style={{fontSize:'1rem',wordBreak:'break-word'}}>{metrics.topDiv}</strong>
         </Card>
       </div>
 
-      {rows.length === 0 ? (
-        <Card><div className="empty">No employee performance data found in the database.</div></Card>
-      ) : (
-        <Card>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Employee</th>
-                  <th>Evaluation Month</th>
-                  <th>Division & Department</th>
-                  <th>Designation</th>
-                  <th>{monthFilter === 'All' ? 'Overall Avg Score' : 'Month Score'}</th>
-                  {monthFilter === 'All' ? <th>Latest Score</th> : null}
-                  <th>Rating Band</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map(r => (
+      <Card>
+        <div style={{display:'flex',alignItems:'center',justify:'space-between',marginBottom:'14px',flexWrap:'wrap',gap:'8px'}}>
+          <div style={{fontSize:'0.9rem',fontWeight:700,color:'#1e293b'}}>
+            Performance Matrix for: <span style={{color:'#2563eb'}}>{monthFilter === 'All' ? 'All Months (Overall)' : monthFilter}</span>
+          </div>
+          {monthFilter !== 'All' ? (
+            <button className="text-action" onClick={() => setMonthFilter('All')} style={{fontSize:'0.8rem'}}>
+              Reset to All Months
+            </button>
+          ) : null}
+        </div>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Employee</th>
+                <th>Division</th>
+                <th>Department</th>
+                <th>Designation</th>
+                <th>Evaluation Month</th>
+                <th>Score</th>
+                <th>Rating Band</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(r => {
+                const score = monthFilter === 'All' ? r.overall_average : r.month_score
+                const band = monthFilter === 'All' ? r.rating_band : r.month_band
+                return (
                   <tr key={r.user_id}>
                     <td>
                       <strong>{r.employee}</strong>
-                      {r.email ? <div style={{fontSize:'0.75rem',color:'var(--color-muted,#64748b)'}}>{r.email}</div> : null}
+                      <div className="cell-help">{r.email}</div>
                     </td>
+                    <td>{r.division || '—'}</td>
+                    <td>{r.department || '—'}</td>
+                    <td>{r.designation || '—'}</td>
                     <td>
-                      <span className="status" style={{background:'var(--color-bg-subtle,#f1f5f9)',color:'var(--color-text,#1e293b)'}}>
-                        {monthFilter === 'All' ? 'All Months' : monthFilter}
+                      <span style={{fontSize:'0.85rem',fontWeight:600,color:'#475569'}}>
+                        {monthFilter === 'All' ? 'All Months (Overall)' : (r.display_month || monthFilter)}
                       </span>
                     </td>
                     <td>
-                      <div><strong>{r.division}</strong></div>
-                      <small style={{color:'var(--color-muted,#64748b)'}}>{r.department}</small>
+                      {score != null ? <Score value={score}/> : <span className="muted">N/A</span>}
                     </td>
-                    <td>{r.designation || '—'}</td>
                     <td>
-                      <Score value={monthFilter === 'All' ? r.overall_average : r.month_score}/>
-                    </td>
-                    {monthFilter === 'All' ? <td><Score value={r.latest_score}/></td> : null}
-                    <td>
-                      <span className={`status ${bandClass(monthFilter === 'All' ? r.rating_band : r.month_band)}`}>
-                        {monthFilter === 'All' ? r.rating_band : r.month_band}
+                      <span className={`status-badge ${bandClass(band)}`}>
+                        {band}
                       </span>
                     </td>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Card>
-      )}
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+        {!rows.length ? <div className="empty">No performance data found for this filter.</div> : null}
+      </Card>
     </>}
+
+    {/* Interactive Calendar Month Picker Modal */}
+    {showMonthModal ? (
+      <Modal 
+        title="Select Report Month & Year Calendar" 
+        onClose={() => setShowMonthModal(false)}
+        actions={
+          <button className="secondary" onClick={() => setShowMonthModal(false)}>Close</button>
+        }
+      >
+        <div style={{display:'flex',flexDirection:'column',gap:'16px'}}>
+          <div style={{display:'flex',justify:'space-between',alignItems:'center',background:'#f8fafc',padding:'10px 14px',borderRadius:'8px',border:'1px solid #e2e8f0'}}>
+            <button 
+              type="button" 
+              className={monthFilter === 'All' ? 'primary small' : 'secondary small'}
+              onClick={() => selectMonth('All')}
+            >
+              All Months (Overall)
+            </button>
+            <div style={{display:'flex',alignItems:'center',gap:'8px'}}>
+              <button type="button" className="icon-button" onClick={() => setCalYear(y => y - 1)}><ChevronLeft size={16}/></button>
+              <strong style={{fontSize:'1rem',color:'#0f172a'}}>{calYear}</strong>
+              <button type="button" className="icon-button" onClick={() => setCalYear(y => y + 1)}><ChevronRight size={16}/></button>
+            </div>
+          </div>
+
+          <div style={{display:'grid',gridTemplateColumns:'repeat(4, 1fr)',gap:'10px'}}>
+            {monthNames.map((mName, mIdx) => {
+              const label = `${mName} ${calYear}`
+              const isAvailable = availableMonths.includes(label)
+              const isSelected = monthFilter === label
+              return (
+                <button
+                  key={mName}
+                  type="button"
+                  onClick={() => selectMonth(label)}
+                  style={{
+                    padding:'12px 8px',
+                    borderRadius:'8px',
+                    border: isSelected ? '2px solid #2563eb' : '1px solid #cbd5e1',
+                    background: isSelected ? '#eff6ff' : isAvailable ? '#ffffff' : '#f8fafc',
+                    color: isSelected ? '#1d4ed8' : isAvailable ? '#0f172a' : '#94a3b8',
+                    fontWeight: isSelected || isAvailable ? 700 : 500,
+                    cursor:'pointer',
+                    display:'flex',
+                    flexDirection:'column',
+                    alignItems:'center',
+                    gap:'4px',
+                    boxShadow: isSelected ? '0 0 0 3px #dbeafe' : 'none'
+                  }}
+                >
+                  <span>{mName}</span>
+                  {isAvailable ? (
+                    <span style={{fontSize:'0.65rem',background:'#dbeafe',color:'#1e40af',padding:'1px 6px',borderRadius:'6px',fontWeight:600}}>
+                      Report Data
+                    </span>
+                  ) : (
+                    <span style={{fontSize:'0.65rem',color:'#94a3b8'}}>No Data</span>
+                  )}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      </Modal>
+    ) : null}
   </>
 }

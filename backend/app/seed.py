@@ -272,22 +272,23 @@ def add_users(db, s):
                        manager_id=manager.id if manager else None)
             db.add(obj); db.flush()
         return obj
-    admin = user("Super Admin", "admin@kpi.local", Role.superadmin)
-    hrm = user("HR Manager", "hr@kpi.local", Role.hr, "hr_manager")
-    project = user("Priya Project Manager", "project@kpi.local", Role.manager, "project_manager")
-    finance = user("Kamakshi Finance Manager", "finance@kpi.local", Role.manager, "finance_manager")
-    technical = user("Sankar AVP Technical", "sankar@kpi.local", Role.manager, "avp_technical")
-    sales = user("Sales Manager", "sales@kpi.local", Role.manager, "sales_manager")
-    admin_mgr = user("Admin Manager", "admin.manager@kpi.local", Role.manager, "admin_manager")
-    svp_projects = user("SVP Projects", "svp.projects@kpi.local", Role.manager, "svp_projects")
-    avp_java = user("AVP Technology", "avp.technology@kpi.local", Role.manager, "avp_technology", svp_projects)
-    java_pm = user("Java Project Manager", "java.pm@kpi.local", Role.manager, "java_project_manager", avp_java)
-    java_tl = user("Java Team Lead", "java.teamlead@kpi.local", Role.manager, "team_lead_java", java_pm)
-    ba_testing = user("Business Analyst & Testing Lead", "ba.testing@kpi.local", Role.employee, "business_analyst_testing_lead", java_pm)
-    user("Project Executive", "project.employee@kpi.local", Role.employee, "project_executive", project)
-    user("Accounts Executive", "accounts@kpi.local", Role.employee, "accounts_executive", finance)
-    user("Software Developer", "developer@kpi.local", Role.employee, "software_developer", technical)
-    user("Sales Executive", "sales.employee@kpi.local", Role.employee, "sales_executive", sales)
+    admin = user("Super Admin", "admin@eaglesoftware.in", Role.superadmin)
+    hrm = user("HR Manager", "hr@eaglesoftware.in", Role.hr, "hr_manager")
+    project = user("Priya Project Manager", "project@eaglesoftware.in", Role.manager, "project_manager")
+    finance = user("Kamakshi Finance Manager", "finance@eaglesoftware.in", Role.manager, "finance_manager")
+    technical = user("Sankar AVP Technical", "sankar@eaglesoftware.in", Role.manager, "avp_technical")
+    sales = user("Sales Manager", "sales@eaglesoftware.in", Role.manager, "sales_manager")
+    admin_mgr = user("Admin Manager", "admin.manager@eaglesoftware.in", Role.manager, "admin_manager")
+    svp_projects = user("SVP Projects", "svp.projects@eaglesoftware.in", Role.manager, "svp_projects")
+    avp_java = user("AVP Technology", "avp.technology@eaglesoftware.in", Role.manager, "avp_technology", svp_projects)
+    java_pm = user("Java Project Manager", "java.pm@eaglesoftware.in", Role.manager, "java_project_manager", avp_java)
+    java_tl = user("Java Team Lead", "java.teamlead@eaglesoftware.in", Role.manager, "team_lead_java", java_pm)
+    ba_testing = user("Business Analyst & Testing Lead", "ba.testing@eaglesoftware.in", Role.employee, "business_analyst_testing_lead", java_pm)
+    user("Project Executive", "project.employee@eaglesoftware.in", Role.employee, "project_executive", project)
+    user("Accounts Executive", "accounts@eaglesoftware.in", Role.employee, "accounts_executive", finance)
+    user("Software Developer", "developer@eaglesoftware.in", Role.employee, "software_developer", technical)
+    user("Sales Executive", "sales.employee@eaglesoftware.in", Role.employee, "sales_executive", sales)
+    user("Mothini", "mothini@eaglesoftware.in", Role.employee, "software_developer", technical)
     db.commit()
     return {"admin": admin, "hr": hrm, "project": project, "finance": finance, "technical": technical, "sales": sales, "admin_mgr": admin_mgr,
             "svp_projects": svp_projects, "avp_java": avp_java, "java_pm": java_pm, "java_tl": java_tl, "ba_testing": ba_testing}
@@ -323,12 +324,18 @@ def fill_assignment(db, a, performance=0.82, finalize=True):
 
 def add_cycles_assignments(db, templates, users):
     cycle_defs = [
+        ("January 2026", date(2026,1,1), date(2026,1,31), CycleStatus.closed),
+        ("February 2026", date(2026,2,1), date(2026,2,28), CycleStatus.closed),
         ("March 2026", date(2026,3,1), date(2026,3,31), CycleStatus.closed),
         ("April 2026", date(2026,4,1), date(2026,4,30), CycleStatus.closed),
         ("May 2026", date(2026,5,1), date(2026,5,31), CycleStatus.closed),
         ("June 2026", date(2026,6,1), date(2026,6,30), CycleStatus.closed),
         ("July 2026", date(2026,7,1), date(2026,7,31), CycleStatus.closed),
         ("August 2026", date(2026,8,1), date(2026,8,31), CycleStatus.running),
+        ("September 2026", date(2026,9,1), date(2026,9,30), CycleStatus.upcoming),
+        ("October 2026", date(2026,10,1), date(2026,10,31), CycleStatus.upcoming),
+        ("November 2026", date(2026,11,1), date(2026,11,30), CycleStatus.upcoming),
+        ("December 2026", date(2026,12,1), date(2026,12,31), CycleStatus.upcoming),
     ]
     cycles = {}
     for name, start, end, status in cycle_defs:

@@ -113,15 +113,8 @@ def _rating_band_label(score: float) -> str:
 
 
 @router.get("/monthly-matrix")
-def monthly_matrix(db: Session = Depends(get_db), _=Depends(require_roles(Role.superadmin, Role.hr))):
-    rows = db.scalars(
-        select(KpiAssignment)
-        .options(
-            joinedload(KpiAssignment.user).joinedload(User.designation).joinedload(Designation.department).joinedload(Department.division),
-            joinedload(KpiAssignment.cycle),
-        )
-        .order_by(KpiAssignment.user_id, KpiAssignment.id)
-    ).all()
+def monthly_matrix(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    rows = _visible_assignments(db, user)
     matrix = defaultdict(dict)
     info = {}
     month_dates = {}

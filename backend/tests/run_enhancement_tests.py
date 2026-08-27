@@ -33,8 +33,8 @@ def login(email: str):
     return {"Authorization": f"Bearer {response.json()['access_token']}"}
 
 
-admin = login("admin@kpi.local")
-hr = login("hr@kpi.local")
+admin = login("admin@eaglesoftware.in")
+hr = login("hr@eaglesoftware.in")
 assert client.post("/api/admin/reset-data", headers=hr, json={"confirm": "RESET"}).status_code == 403
 
 rows = client.get("/api/kpi/my", headers=admin).json()
@@ -109,7 +109,7 @@ assert template.json()["total_weight"] == 100
 # Employee workbook preview.
 wb = Workbook(); ws = wb.active
 ws.append(["Name", "Email", "Role", "Department", "Designation", "Manager Email"])
-ws.append(["New Test User", "new.test@example.com", "employee", "Project Management", "Project Executive", "project@kpi.local"])
+ws.append(["New Test User", "new.test@example.com", "employee", "Project Management", "Project Executive", "project@eaglesoftware.in"])
 buf = BytesIO(); wb.save(buf); buf.seek(0)
 employees = client.post("/api/admin/import-employees-excel", headers=admin, data={"preview": "true"}, files={"file": ("employees.xlsx", buf.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")})
 assert employees.status_code == 200, employees.text

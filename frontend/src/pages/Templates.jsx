@@ -2,9 +2,13 @@ import {useEffect, useMemo, useState} from 'react'
 import {Building2, Check, Eye, FileUp, FolderTree, Pencil, Plus, Table, Trash2, Undo2} from 'lucide-react'
 import {Link, useNavigate} from 'react-router-dom'
 import {api, getError} from '../lib/api'
+import {useAuth} from '../lib/auth'
 import {Card, ErrorBox, Loader, Modal, PageHeader, Status} from '../components/UI'
 
 export default function Templates(){
+  const { user } = useAuth()
+  const isAdmin = ['superadmin', 'hr'].includes(user?.role)
+
   const [rows,setRows]=useState(null),[masters,setMasters]=useState([]),[error,setError]=useState(''),[message,setMessage]=useState('')
   const [showImport,setShowImport]=useState(false),[divisionFilter,setDivisionFilter]=useState(''),[departmentFilter,setDepartmentFilter]=useState('')
   const [viewMode,setViewMode]=useState('hierarchy') // 'hierarchy' | 'table'
@@ -60,19 +64,36 @@ export default function Templates(){
   }
 
   return <>
-    <PageHeader title="KPI Templates & Hierarchy" subtitle="Organize task-based targets by Division and Department. View, edit, and publish template structures." actions={<><button className="secondary" onClick={()=>setShowImport(v=>!v)}><FileUp size={16}/>Import</button><Link className="primary" to="/templates/new"><Plus size={16}/>Create simple template</Link></>}/>
+    <PageHeader title="KPI Templates & Hierarchy" subtitle="Organize task-based targets by Division and Department. View template structures and parameter details." actions={isAdmin ? (<><button className="secondary" onClick={()=>setShowImport(v=>!v)}><FileUp size={16}/>Import</button><Link className="primary" to="/templates/new"><Plus size={16}/>Create simple template</Link></>) : null}/>
     <ErrorBox error={error}/>{message?<div className="success-box">{message}</div>:null}
 
-    <Card>
-      <div className="helper-strip"><strong>Hierarchy structure:</strong> Filter templates by division and department or toggle between Hierarchy View and Table View. Each template includes Show/View, Edit, and Publish options.</div>
-      <div className="form-grid">
-        <label>Show division<select value={divisionFilter} onChange={e=>{setDivisionFilter(e.target.value);if(e.target.value&&!masters.find(d=>d.name===e.target.value)?.departments.some(dep=>dep.name===departmentFilter))setDepartmentFilter('')}}><option value="">All divisions</option>{divisionOptions.map(x=><option key={x} value={x}>{x}</option>)}</select></label>
-        <label>Show department<select value={departmentFilter} onChange={e=>setDepartmentFilter(e.target.value)}><option value="">All departments</option>{departmentOptions.map(x=><option key={x} value={x}>{x}</option>)}</select></label>
-      </div>
-      <div style={{display:'flex',gap:'8px',marginTop:'12px',alignItems:'center'}}>
-        <span style={{fontSize:'0.85rem',fontWeight:600,color:'var(--color-muted,#64748b)'}}>View mode:</span>
-        <button className={viewMode==='hierarchy'?'primary small':'secondary small'} onClick={()=>setViewMode('hierarchy')}><FolderTree size={14}/>Hierarchy View</button>
-        <button className={viewMode==='table'?'primary small':'secondary small'} onClick={()=>setViewMode('table')}><Table size={14}/>Table View</button>
+    <Card style={{padding:'14px 18px',marginBottom:'16px'}}>
+      <div style={{display:'flex',alignItems:'center',justify:'space-between',flexWrap:'wrap',gap:'14px'}}>
+        <div style={{display:'flex',alignItems:'center',gap:'16px',flexWrap:'wrap'}}>
+          <label style={{display:'flex',alignItems:'center',gap:'8px',fontSize:'0.85rem',fontWeight:600,color:'#334155',margin:0}}>
+            Show division
+            <select value={divisionFilter} onChange={e=>{setDivisionFilter(e.target.value);if(e.target.value&&!masters.find(d=>d.name===e.target.value)?.departments.some(dep=>dep.name===departmentFilter))setDepartmentFilter('')}} style={{width:'180px',height:'36px',padding:'6px 10px',fontSize:'0.85rem'}}>
+              <option value="">All divisions</option>
+              {divisionOptions.map(x=><option key={x} value={x}>{x}</option>)}
+            </select>
+          </label>
+          <label style={{display:'flex',alignItems:'center',gap:'8px',fontSize:'0.85rem',fontWeight:600,color:'#334155',margin:0}}>
+            Show department
+            <select value={departmentFilter} onChange={e=>setDepartmentFilter(e.target.value)} style={{width:'180px',height:'36px',padding:'6px 10px',fontSize:'0.85rem'}}>
+              <option value="">All departments</option>
+              {departmentOptions.map(x=><option key={x} value={x}>{x}</option>)}
+            </select>
+          </label>
+        </div>
+        <div style={{display:'flex',alignItems:'center',gap:'8px',background:'#f8fafc',padding:'4px 8px',borderRadius:'8px',border:'1px solid #e2e8f0'}}>
+          <span style={{fontSize:'0.8rem',fontWeight:600,color:'#64748b'}}>View:</span>
+          <button className={viewMode==='hierarchy'?'primary small':'secondary small'} onClick={()=>setViewMode('hierarchy')}>
+            <FolderTree size={14}/>Hierarchy View
+          </button>
+          <button className={viewMode==='table'?'primary small':'secondary small'} onClick={()=>setViewMode('table')}>
+            <Table size={14}/>Table View
+          </button>
+        </div>
       </div>
     </Card>
 

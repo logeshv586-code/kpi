@@ -33,13 +33,13 @@ function Protected() {
     <Route path="kpi" element={<MyKpi/>}/>
     <Route path="kpi-dashboard" element={<Navigate to={`/${home}`} replace/>}/>
     <Route path="approvals" element={<RoleGate roles={['superadmin','hr','manager']}><Approvals/></RoleGate>}/>
-    <Route path="templates" element={<RoleGate roles={['superadmin','hr']}><Templates/></RoleGate>}/>
+    <Route path="templates" element={<Templates/>}/>
     <Route path="templates/new" element={<RoleGate roles={['superadmin','hr']}><TemplateBuilder/></RoleGate>}/>
     <Route path="cycles" element={<RoleGate roles={['superadmin','hr']}><Cycles/></RoleGate>}/>
     <Route path="assignments" element={<RoleGate roles={['superadmin','hr']}><Assignments/></RoleGate>}/>
-    <Route path="employees" element={<RoleGate roles={['superadmin','hr']}><Employees/></RoleGate>}/>
+    <Route path="employees" element={<Employees/>}/>
     <Route path="hierarchy" element={<Navigate to="/templates" replace/>}/>
-    <Route path="reports" element={<RoleGate roles={['superadmin','hr']}><Reports/></RoleGate>}/>
+    <Route path="reports" element={<Reports/>}/>
     <Route path="masters" element={<RoleGate roles={['superadmin','hr']}><Masters/></RoleGate>}/>
     <Route path="audit" element={<RoleGate roles={['superadmin','hr']}><Audit/></RoleGate>}/>
     <Route path="settings" element={<RoleGate roles={['superadmin','hr']}><Settings/></RoleGate>}/>

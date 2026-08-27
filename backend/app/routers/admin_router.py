@@ -6,10 +6,10 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
-from ..auth import hash_password, require_roles
+from ..auth import get_current_user, hash_password, require_roles
 from ..database import get_db
 from ..file_storage import TEMPLATE_EXTENSIONS, parse_template_rows, read_table, save_upload
-from ..models import Department, Designation, Division, Role, SystemSetting, User
+from ..models import Department, Designation, Division, KpiAssignment, KpiTemplate, Role, SystemSetting, TemplateStatus, User
 from ..reset_seed import reset_transactional_data
 from ..sample_files import ensure_samples
 from ..schemas import MasterCreate, ResetIn, SettingsIn, UserCreate, UserOut, UserUpdate
@@ -91,13 +91,41 @@ def add_designation(payload: MasterCreate, db: Session = Depends(get_db), user=D
 
 
 @router.get("/users")
-def list_users(db: Session = Depends(get_db), _=Depends(admin_roles)):
+def list_users(db: Session = Depends(get_db), _=Depends(get_current_user)):
     users = db.scalars(
         select(User)
         .options(joinedload(User.designation).joinedload(Designation.department).joinedload(Department.division))
         .order_by(User.name)
     ).all()
     manager_names = {u.id: u.name for u in users}
+
+    user_templates = {}
+    assignments = db.scalars(
+        select(KpiAssignment)
+        .options(joinedload(KpiAssignment.template))
+        .order_by(KpiAssignment.id.desc())
+    ).all()
+    for a in assignments:
+        if a.user_id not in user_templates and a.template:
+            user_templates[a.user_id] = a.template.name
+
+    templates = db.scalars(
+        select(KpiTemplate).where(KpiTemplate.status == TemplateStatus.active)
+    ).all()
+
+    def find_template(u):
+        if u.id in user_templates:
+            return user_templates[u.id]
+        if u.designation_id:
+            for t in templates:
+                if t.designation_id == u.designation_id:
+                    return t.name
+        if u.designation and u.designation.department_id:
+            for t in templates:
+                if t.department_id == u.designation.department_id:
+                    return t.name
+        return "General KPI Template"
+
     return [
         {
             "id": u.id,
@@ -111,6 +139,7 @@ def list_users(db: Session = Depends(get_db), _=Depends(admin_roles)):
             "designation": u.designation.name if u.designation else None,
             "department": u.designation.department.name if u.designation else None,
             "division": u.designation.department.division.name if u.designation else None,
+            "kpi_template": find_template(u),
             "active": u.active,
         }
         for u in users

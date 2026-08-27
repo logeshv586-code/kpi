@@ -389,6 +389,23 @@ def publish(template_id: int, db: Session = Depends(get_db), user=Depends(admin_
         old.status = TemplateStatus.archived
     t.status = TemplateStatus.active
     audit(db, user.id, "publish", "kpi_template", t.id, {"version": t.version, "archived_versions": [x.id for x in previous]})
+    
+    # Auto-assign newly published template to matching active users for running cycles
+    running_cycles = db.scalars(select(KpiCycle).where(KpiCycle.status == CycleStatus.running)).all()
+    if running_cycles:
+        active_users = db.scalars(
+            select(User)
+            .where(User.active.is_(True))
+            .options(joinedload(User.designation).joinedload(Designation.department).joinedload(Department.division))
+        ).unique().all()
+        for cycle in running_cycles:
+            for emp in active_users:
+                if emp.role == Role.superadmin:
+                    continue
+                if _template_matches_employee(t, emp):
+                    existing = db.scalar(select(KpiAssignment).where(KpiAssignment.cycle_id == cycle.id, KpiAssignment.user_id == emp.id))
+                    if not existing:
+                        db.add(KpiAssignment(cycle_id=cycle.id, user_id=emp.id, template_id=t.id))
     db.commit()
     return {"ok": True}
 
@@ -545,8 +562,39 @@ def auto_assign(payload: AutoAssignIn, db: Session = Depends(get_db), actor=Depe
     return {"assigned": assigned, "skipped_existing": skipped, "no_active_template": no_template}
 
 
+def _auto_assign_user_on_access(db: Session, user: User):
+    if user.role == Role.superadmin:
+        return
+    cycles = db.scalars(select(KpiCycle).order_by(KpiCycle.id.desc())).all()
+    if not cycles:
+        return
+    emp = db.scalar(select(User).where(User.id == user.id).options(joinedload(User.designation).joinedload(Designation.department).joinedload(Department.division)))
+    if not emp:
+        return
+    for cycle in cycles:
+        existing = db.scalar(select(KpiAssignment).where(KpiAssignment.cycle_id == cycle.id, KpiAssignment.user_id == user.id))
+        if existing:
+            continue
+        templates = db.scalars(
+            select(KpiTemplate)
+            .where(KpiTemplate.status == TemplateStatus.active)
+            .options(joinedload(KpiTemplate.division), joinedload(KpiTemplate.department), joinedload(KpiTemplate.designation), joinedload(KpiTemplate.kras).joinedload(Kra.items))
+            .order_by(KpiTemplate.version.desc(), KpiTemplate.id.desc())
+        ).unique().all()
+        matching = [t for t in templates if validate_template(t, strict=True)[0] and _template_matches_employee(t, emp)]
+        if matching:
+            best_template = max(matching, key=_template_scope_rank)
+            a = KpiAssignment(cycle_id=cycle.id, user_id=user.id, template_id=best_template.id)
+            db.add(a)
+            try:
+                db.commit()
+            except Exception:
+                db.rollback()
+
+
 @router.get("/my")
 def my_assignments(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    _auto_assign_user_on_access(db, user)
     stmt = (
         select(KpiAssignment)
         .options(
@@ -656,7 +704,7 @@ async def import_assignment_responses(assignment_id: int, file: UploadFile, db: 
 
 
 @router.get("/assignments/{assignment_id}/pdf")
-def assignment_pdf(assignment_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+def assignment_pdf(assignment_id: int, date_label: str | None = None, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import getSampleStyleSheet
@@ -669,11 +717,20 @@ def assignment_pdf(assignment_id: int, db: Session = Depends(get_db), user: User
     if not _can_view_assignment(user, a):
         raise HTTPException(403, "Forbidden")
     response_map = {r.kpi_item_id: r for r in a.responses}
+    has_data = any(
+        r and (r.actual_numeric is not None or r.selected_option or r.answer_text or r.remarks)
+        for r in response_map.values()
+    )
+    period_title = date_label if date_label else a.cycle.name
+    if not has_data:
+        raise HTTPException(400, f"No KPI input data registered for {period_title} yet.")
+
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=14*mm, rightMargin=14*mm, topMargin=14*mm, bottomMargin=14*mm)
     styles = getSampleStyleSheet()
-    story = [Paragraph("KPI Performance Summary", styles["Title"]), Spacer(1, 6)]
-    story.append(Paragraph(f"<b>Employee:</b> {a.user.name} &nbsp;&nbsp; <b>Cycle:</b> {a.cycle.name} &nbsp;&nbsp; <b>Status:</b> {a.status.value.replace('_',' ').title()}", styles["BodyText"]))
+    period_title = date_label if date_label else a.cycle.name
+    story = [Paragraph("KPI Performance Summary Report", styles["Title"]), Spacer(1, 6)]
+    story.append(Paragraph(f"<b>Employee:</b> {a.user.name} &nbsp;&nbsp; <b>Period / Selected Date:</b> {period_title} &nbsp;&nbsp; <b>Status:</b> {a.status.value.replace('_',' ').title()}", styles["BodyText"]))
     score = a.final_score if a.final_score is not None else (a.manager_score if a.manager_score is not None else a.calculated_score)
     story.append(Paragraph(f"<b>Score:</b> {score:.1f} / 100 &nbsp;&nbsp; <b>Template:</b> {a.template.name}", styles["BodyText"]))
     story.append(Spacer(1, 10))
@@ -704,7 +761,8 @@ def assignment_pdf(assignment_id: int, db: Session = Depends(get_db), user: User
     story.append(table)
     doc.build(story)
     buf.seek(0)
-    filename = f"KPI_{a.user.name.replace(' ','_')}_{a.cycle.name.replace(' ','_')}.pdf"
+    clean_tag = period_title.replace(' ', '_').replace('/', '_')
+    filename = f"KPI_{a.user.name.replace(' ','_')}_{clean_tag}.pdf"
     return StreamingResponse(buf, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
 
@@ -719,7 +777,8 @@ def save_response(assignment_id: int, payload: list[ResponseIn], db: Session = D
     if user.role == Role.manager and a.user_id != user.id:
         raise HTTPException(403, "Managers review KPI submissions; they cannot edit employee answers")
     if a.status in {AssignmentStatus.finalized, AssignmentStatus.submitted, AssignmentStatus.manager_reviewed}:
-        raise HTTPException(409, "Assignment is locked")
+        if user.role not in {Role.superadmin, Role.hr}:
+            raise HTTPException(409, "KPI entry has already been submitted and locked for this period. Employees are permitted only one submission per period. Contact HR or Super Admin to edit or reopen.")
     valid_ids = set(db.scalars(select(KpiItem.id).join(Kra).where(Kra.template_id == a.template_id)).all())
     for p in payload:
         if p.kpi_item_id not in valid_ids:
@@ -731,7 +790,8 @@ def save_response(assignment_id: int, payload: list[ResponseIn], db: Session = D
         for key, value in p.model_dump().items():
             if key != "kpi_item_id":
                 setattr(r, key, value)
-    a.status = AssignmentStatus.draft
+    if a.status == AssignmentStatus.not_started:
+        a.status = AssignmentStatus.draft
     db.flush()
     score = recalc_assignment(db, a.id)
     audit(db, user.id, "save_responses", "kpi_assignment", a.id, {"score": score})
