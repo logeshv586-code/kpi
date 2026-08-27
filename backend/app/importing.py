@@ -106,7 +106,6 @@ def create_template_from_import_rows(db: Session, name: str, designation_id: int
     template = KpiTemplate(name=name.strip(), designation_id=designation_id, status=TemplateStatus.draft)
     db.add(template)
     db.flush()
-    default_score_map = {"Excellent": 100, "Good": 80, "Average": 60, "Poor": 40, "Not achieved": 0}
 
     for kra_name, kra_rows in groups.items():
         kra_weight = float(kra_weights[kra_name])
@@ -130,7 +129,9 @@ def create_template_from_import_rows(db: Session, name: str, designation_id: int
             direction = normalize_name(row.get("direction"))
             direction = "lower" if direction.startswith("lower") or "less" in direction else "higher"
             options = {
-                "score_map": default_score_map if input_type == "choice" else ({"Yes": 100, "No": 0} if input_type == "yesno" else {}),
+                # Custom Dropdown values are intentionally blank after template import.
+                # HR/Admin defines the exact result names and score percentages in Template Builder.
+                "score_map": {"Yes": 100, "No": 0} if input_type == "yesno" else {},
                 "meta": {
                     "frequency": str(row.get("frequency") or "Monthly / as configured").strip(),
                     "measurement": str(row.get("measurement") or "").strip(),
