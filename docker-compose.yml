@@ -18,7 +18,7 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg2://kpi:kpi_password@db:5432/kpi_db
       SECRET_KEY: dev-docker-secret-change-this-to-a-long-random-value
-      CORS_ORIGINS: http://localhost:5173,http://localhost:8080
+      CORS_ORIGINS: http://localhost:5173,http://127.0.0.1:5173,http://192.168.1.85:5173,http://localhost:8080,http://127.0.0.1:8080,http://192.168.1.85:8080
       FRONTEND_URL: http://localhost:8080
     depends_on:
       db:

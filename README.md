@@ -155,8 +155,8 @@ docker compose up --build
 Open:
 
 - App: `http://localhost:8080`
-- FastAPI docs: `http://localhost:8000/docs`
-- Health: `http://localhost:8000/api/health`
+- FastAPI docs: `http://192.168.1.85:8000/docs`
+- Health: `http://192.168.1.85:8000/api/health`
 
 Docker starts PostgreSQL, creates/updates the required schema, initializes the sample files and first-run demo data, starts FastAPI, builds React and serves the UI through Nginx. Uploaded evidence is persisted through the `./backend/uploads:/app/uploads` bind mount.
 
@@ -269,7 +269,7 @@ KPI_SAMPLE_DIR=./samples
 Frontend optional:
 
 ```env
-VITE_API_URL=http://localhost:8000/api
+VITE_API_URL=http://192.168.1.85:8000/api
 ```
 
 ## Production checklist

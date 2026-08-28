@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./kpi.db"
     secret_key: str = "dev-secret-change-me-please-use-32-plus-characters"
     access_token_expire_minutes: int = 720
-    cors_origins: str = "http://localhost:5173,http://localhost:8080"
+    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173,http://192.168.1.85:5173,http://localhost:8080,http://127.0.0.1:8080,http://192.168.1.85:8080"
     smtp_host: str = ""
     smtp_port: int = 587
     smtp_username: str = ""

@@ -15,7 +15,7 @@ FASTEST START
 
 4. Open:
    Web: http://localhost:8080
-   API docs: http://localhost:8000/docs
+   API docs: http://192.168.1.85:8000/docs
 
 DEMO LOGIN
   Super Admin: admin@kpi.local / Admin@123
