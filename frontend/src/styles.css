@@ -55,3 +55,5 @@
 .calendar-month-actions{display:flex;gap:6px;margin-top:10px}
 @media(max-width:760px){.calendar-grid-container{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:480px){.calendar-grid-container{grid-template-columns:1fr}}
+.form-grid input.field-invalid,.form-grid select.field-invalid{border-color:#dc2626;background:#fff7f7}.form-grid input.field-invalid:focus,.form-grid select.field-invalid:focus{border-color:#dc2626;box-shadow:0 0 0 3px #fee2e2}
+.required-mark{color:#dc2626;font-weight:800}

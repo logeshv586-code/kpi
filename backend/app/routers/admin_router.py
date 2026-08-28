@@ -188,12 +188,18 @@ def delete_designation(designation_id: int, db: Session = Depends(get_db), user=
 
 
 @router.get("/users")
-def list_users(db: Session = Depends(get_db), _=Depends(require_tab_permission("employees"))):
-    users = db.scalars(
+def list_users(db: Session = Depends(get_db), actor: User = Depends(require_tab_permission("employees"))):
+    # View-only access to the directory is a self-service profile view.  Do
+    # not rely on the frontend filter here: the API must never disclose the
+    # rest of the employee directory to a regular user.
+    statement = (
         select(User)
         .options(joinedload(User.designation).joinedload(Designation.department).joinedload(Department.division), joinedload(User.kpi_template))
         .order_by(User.name)
-    ).all()
+    )
+    if not has_tab_permission(actor, "employees", edit=True):
+        statement = statement.where(User.id == actor.id)
+    users = db.scalars(statement).all()
     manager_names = {u.id: u.name for u in users}
 
     user_templates = {}
@@ -342,6 +348,12 @@ def update_user(user_id: int, payload: UserUpdate, db: Session = Depends(get_db)
     if not user:
         raise HTTPException(404, "User not found")
     data = payload.model_dump(exclude_unset=True)
+    # Employees change their own password through /auth/change-password,
+    # which verifies the current password.  A forgotten-password reset is a
+    # Super Admin-only operation, even when another role can edit directory
+    # records.
+    if "password" in data and data["password"] and actor.role != Role.superadmin:
+        raise HTTPException(403, "Only Super Admin can reset an employee password")
     if "access_permissions" in data and actor.role != Role.superadmin:
         raise HTTPException(403, "Only Super Admin can grant tab or edit permissions")
     if "email" in data and data["email"]:

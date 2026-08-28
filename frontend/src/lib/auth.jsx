@@ -22,6 +22,6 @@ export const useAuth=()=>useContext(AuthContext)
 export const canAccessTab = (user, tab, edit = false) => {
   if (user?.role === 'superadmin') return true
   const permissions = user?.permissions || {}
-  const allowed = permissions[edit ? 'editable_tabs' : 'tabs'] || (edit ? ['kpi-input'] : ['kpi-input', 'reports'])
+  const allowed = permissions[edit ? 'editable_tabs' : 'tabs'] || (edit ? ['kpi-input'] : ['kpi-input', 'reports', 'employees'])
   return allowed.includes('*') || allowed.includes(tab)
 }

@@ -40,6 +40,7 @@ export default function EmployeesV2() {
   const [templates, setTemplates] = useState([])
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
+  const [fieldErrors, setFieldErrors] = useState({})
 
   const [showModal, setShowModal] = useState(false)
   const [editing, setEditing] = useState(null)
@@ -141,6 +142,7 @@ export default function EmployeesV2() {
       access_permissions: {tabs: [], editable_tabs: []}
     })
     setAutoEmail(true)
+    setFieldErrors({})
     setShowModal(true)
   }
 
@@ -163,13 +165,20 @@ export default function EmployeesV2() {
       }
     })
     setAutoEmail(false)
+    setFieldErrors({})
     setShowModal(true)
+  }
+
+  function clearFieldError(field) {
+    setFieldErrors(current => current[field] ? {...current, [field]: ''} : current)
   }
 
   function nameChange(name) {
     let email = form.email
     if (autoEmail && name.trim()) email = `${name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '.')}@eaglesoftware.in`
     setForm({...form, name, email})
+    clearFieldError('name')
+    if (autoEmail && name.trim()) clearFieldError('email')
   }
 
   function generatePassword() {
@@ -177,18 +186,28 @@ export default function EmployeesV2() {
     let pass = ''
     for (let i = 0; i < 10; i++) pass += chars[Math.floor(Math.random() * chars.length)]
     setForm({...form, password: pass})
+    clearFieldError('password')
   }
 
   async function saveEmployee() {
     try {
       setError('')
       setMessage('')
-      if (!form.name.trim() || !form.email.trim()) throw new Error('Name and email are required.')
-      if (!editing && !form.password) throw new Error('Set a temporary password for the new employee.')
-      if (!editing && form.password.length < 6) throw new Error('The temporary password must contain at least 6 characters.')
+      const validationErrors = {}
+      if (!form.name.trim()) validationErrors.name = 'Full name is required.'
+      if (!form.email.trim()) validationErrors.email = 'Email is required.'
+      else if (!/^\S+@\S+\.\S+$/.test(form.email.trim())) validationErrors.email = 'Enter a valid email address.'
+      if (!editing && !form.password) validationErrors.password = 'Temporary password is required.'
+      else if (!editing && form.password.length < 6) validationErrors.password = 'Password must contain at least 6 characters.'
       if (form.department_id && !form.designation_id) {
-        throw new Error('Choose a designation for the selected department so the employee can be mapped correctly.')
+        validationErrors.designation_id = 'Choose a designation for the selected department.'
       }
+      if (Object.keys(validationErrors).length) {
+        setFieldErrors(validationErrors)
+        setError('Complete the required fields highlighted in red.')
+        return
+      }
+      setFieldErrors({})
       const payload = {
         employee_no: form.employee_no.trim() || null,
         name: form.name.trim(),
@@ -480,7 +499,7 @@ export default function EmployeesV2() {
     <>
       <PageHeader
         title="Employees Directory"
-        subtitle="Department-based employee directory. Click any column heading to sort."
+        subtitle={isAdmin ? 'Department-based employee directory. Click any column heading to sort.' : 'Your employee profile. Use Change password in the sidebar whenever you need to update your password.'}
         actions={
           isAdmin ? (
             <div className="row-actions">
@@ -500,7 +519,7 @@ export default function EmployeesV2() {
       />
       {!isAdmin ? (
         <div className="helper-strip" style={{marginBottom: '12px'}}>
-          <ShieldAlert size={16} /> You have view-only access to the employee directory.
+          <ShieldAlert size={16} /> Only your employee profile is visible. Profile changes and password resets are managed by Super Admin.
         </div>
       ) : null}
       <ErrorBox error={error} />
@@ -617,28 +636,37 @@ export default function EmployeesV2() {
               <input value={form.employee_no} onChange={e => setForm({...form, employee_no: e.target.value})} />
             </label>
             <label className="span-2">
-              Full Name *
-              <input value={form.name} onChange={e => nameChange(e.target.value)} />
+              <>Full Name <span className="required-mark">*</span></>
+              <input className={fieldErrors.name ? 'field-invalid' : ''} aria-invalid={Boolean(fieldErrors.name)} value={form.name} onChange={e => nameChange(e.target.value)} />
+              {fieldErrors.name ? <span className="field-error">{fieldErrors.name}</span> : null}
             </label>
             <label className="span-2">
-              Email *
+              <>Email <span className="required-mark">*</span></>
               <input
+                className={fieldErrors.email ? 'field-invalid' : ''}
+                aria-invalid={Boolean(fieldErrors.email)}
                 value={form.email}
                 onChange={e => {
                   setAutoEmail(false)
                   setForm({...form, email: e.target.value})
+                  clearFieldError('email')
                 }}
               />
+              {fieldErrors.email ? <span className="field-error">{fieldErrors.email}</span> : null}
             </label>
-            <label>
-              {editing ? 'New Password (optional)' : 'Temporary Password * (minimum 6 characters)'}
-              <div style={{display: 'flex', gap: '6px'}}>
-                <input type="password" value={form.password} onChange={e => setForm({...form, password: e.target.value})} autoComplete="new-password" />
-                <button type="button" className="secondary icon-button" onClick={generatePassword}>
-                  <KeyRound size={14} />
-                </button>
-              </div>
-            </label>
+            {!editing || isSuperAdmin ? (
+              <label>
+                {editing ? 'Reset Password (optional)' : <>Temporary Password <span className="required-mark">*</span> (minimum 6 characters)</>}
+                <div style={{display: 'flex', gap: '6px'}}>
+                  <input className={fieldErrors.password ? 'field-invalid' : ''} aria-invalid={Boolean(fieldErrors.password)} type="password" value={form.password} onChange={e => { setForm({...form, password: e.target.value}); clearFieldError('password') }} autoComplete="new-password" />
+                  <button type="button" className="secondary icon-button" onClick={generatePassword}>
+                    <KeyRound size={14} />
+                  </button>
+                </div>
+                {fieldErrors.password ? <span className="field-error">{fieldErrors.password}</span> : null}
+                {editing ? <span className="cell-help">Set a temporary password when the employee cannot sign in.</span> : null}
+              </label>
+            ) : null}
 
             {/* Dropdown 1: System Role */}
             <label>
@@ -683,7 +711,7 @@ export default function EmployeesV2() {
             {/* Dropdown 3: Designation / Role */}
             <label className="span-2">
               <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
-                <span>Designation / Role</span>
+                <span>Designation / Role {form.department_id ? <span className="required-mark">*</span> : null}</span>
                 <span style={{display: 'flex', gap: '10px'}}>
                   {isSuperAdmin && form.designation_id ? <button type="button" className="text-action" style={{padding: 0, fontSize: '0.8rem'}} onClick={openDesignationEdit}>Edit Designation</button> : null}
                   {isSuperAdmin && form.designation_id ? <button type="button" className="text-action" style={{padding: 0, fontSize: '0.8rem', color: '#dc2626'}} onClick={deleteSelectedDesignation}>Delete Designation</button> : null}
@@ -691,8 +719,10 @@ export default function EmployeesV2() {
                 </span>
               </div>
               <select
+                className={fieldErrors.designation_id ? 'field-invalid' : ''}
+                aria-invalid={Boolean(fieldErrors.designation_id)}
                 value={form.designation_id}
-                onChange={e => setForm({...form, designation_id: e.target.value})}
+                onChange={e => { setForm({...form, designation_id: e.target.value}); clearFieldError('designation_id') }}
               >
                 <option value="">Select designation</option>
                 {designations.map(x => (
@@ -701,6 +731,7 @@ export default function EmployeesV2() {
                   </option>
                 ))}
               </select>
+              {fieldErrors.designation_id ? <span className="field-error">{fieldErrors.designation_id}</span> : null}
             </label>
 
             {form.role !== 'superadmin' ? (

@@ -13,9 +13,13 @@ export default function Settings(){
   const [resetText, setResetText] = useState('')
   const [resetChecked, setResetChecked] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [resetErrors, setResetErrors] = useState({})
 
   async function reset(){
-    if (resetText !== 'RESET' || !resetChecked) return
+    const errors = {}
+    if (!resetChecked) errors.confirm = 'Confirm that you understand the reset.'
+    if (resetText !== 'RESET') errors.text = 'Type RESET exactly to continue.'
+    if (Object.keys(errors).length) { setResetErrors(errors); setError('Complete the required fields highlighted in red.'); return }
     setBusy(true); setError(''); setMessage('')
     try {
       const {data} = await api.post('/admin/reset-data', {confirm: 'RESET', mode: resetMode})
@@ -56,7 +60,7 @@ export default function Settings(){
         <Modal title="Reset System Data" onClose={() => setResetOpen(false)} actions={
           <>
             <button className="secondary" onClick={() => setResetOpen(false)}>Cancel</button>
-            <button className="danger-button" disabled={resetText !== 'RESET' || !resetChecked || busy} onClick={reset}>
+            <button className="danger-button" disabled={busy} onClick={reset}>
               {busy ? 'Resetting...' : 'Execute System Reset'}
             </button>
           </>
@@ -83,13 +87,15 @@ export default function Settings(){
                 </div>
               </label>
             </div>
-            <label className="confirm-check">
-              <input type="checkbox" checked={resetChecked} onChange={e => setResetChecked(e.target.checked)}/> I understand that selected system data and history will be permanently deleted.
+            <label className={`confirm-check ${resetErrors.confirm?'invalid-field':''}`}>
+              <input aria-invalid={Boolean(resetErrors.confirm)} type="checkbox" checked={resetChecked} onChange={e => {setResetChecked(e.target.checked);setResetErrors(x=>({...x,confirm:''}))}}/> I understand that selected system data and history will be permanently deleted. <span className="required-mark">*</span>
             </label>
+            {resetErrors.confirm?<span className="field-error">{resetErrors.confirm}</span>:null}
             <label>
-              Type <b>RESET</b> to continue
-              <input value={resetText} onChange={e => setResetText(e.target.value)} placeholder="RESET"/>
+              Type <b>RESET</b> to continue <span className="required-mark">*</span>
+              <input className={resetErrors.text?'field-invalid':''} aria-invalid={Boolean(resetErrors.text)} value={resetText} onChange={e => {setResetText(e.target.value);setResetErrors(x=>({...x,text:''}))}} placeholder="RESET"/>
             </label>
+            {resetErrors.text?<span className="field-error">{resetErrors.text}</span>:null}
           </div>
         </Modal>
       ) : null}

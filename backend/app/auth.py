@@ -14,7 +14,9 @@ from .models import Role, User
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 ALGORITHM = "HS256"
-DEFAULT_TABS = {"kpi-input", "reports"}
+# Every signed-in user has a self-service employee-profile view.  The
+# directory endpoint restricts view-only users to their own record.
+DEFAULT_TABS = {"kpi-input", "reports", "employees"}
 
 
 def user_permissions(user: User) -> dict:

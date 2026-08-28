@@ -20,6 +20,7 @@ export default function Layout({children}) {
   const [passwords, setPasswords] = useState({current_password: '', new_password: '', confirm_password: ''})
   const [passwordError, setPasswordError] = useState('')
   const [passwordMessage, setPasswordMessage] = useState('')
+  const [passwordFieldErrors, setPasswordFieldErrors] = useState({})
 
   function help() {
     localStorage.removeItem('kpi_guide_dismissed')
@@ -29,6 +30,15 @@ export default function Layout({children}) {
   async function changePassword() {
     try {
       setPasswordError('')
+      const fieldErrors = {}
+      if (!passwords.current_password) fieldErrors.current_password = 'Current password is required.'
+      if (!passwords.new_password) fieldErrors.new_password = 'New password is required.'
+      if (!passwords.confirm_password) fieldErrors.confirm_password = 'Please confirm your new password.'
+      if (Object.keys(fieldErrors).length) {
+        setPasswordFieldErrors(fieldErrors)
+        setPasswordError('Complete the required fields highlighted in red.')
+        return
+      }
       if (passwords.new_password !== passwords.confirm_password) throw new Error('New password and confirmation do not match.')
       await api.post('/auth/change-password', {current_password: passwords.current_password, new_password: passwords.new_password})
       setPasswordMessage('Password changed. Use the new password the next time you sign in.')
@@ -62,7 +72,7 @@ export default function Layout({children}) {
             <HelpCircle size={16}/>
             <span>Help & guide</span>
           </button>
-          <button className="help-button" onClick={() => { setPasswordError(''); setPasswordMessage(''); setPasswordOpen(true) }}>
+          <button className="help-button" onClick={() => { setPasswordError(''); setPasswordMessage(''); setPasswordFieldErrors({}); setPasswordOpen(true) }}>
             <KeyRound size={16}/>
             <span>Change password</span>
           </button>
@@ -94,9 +104,9 @@ export default function Layout({children}) {
         <ErrorBox error={passwordError}/>
         {passwordMessage ? <div className="helper-strip">{passwordMessage}</div> : null}
         <div className="form-grid" style={{gridTemplateColumns: '1fr'}}>
-          <label>Current password<input type="password" value={passwords.current_password} onChange={e => setPasswords({...passwords, current_password: e.target.value})} autoComplete="current-password"/></label>
-          <label>New password<input type="password" value={passwords.new_password} onChange={e => setPasswords({...passwords, new_password: e.target.value})} autoComplete="new-password"/></label>
-          <label>Confirm new password<input type="password" value={passwords.confirm_password} onChange={e => setPasswords({...passwords, confirm_password: e.target.value})} autoComplete="new-password"/></label>
+          <label>Current password <span className="required-mark">*</span><input className={passwordFieldErrors.current_password?'field-invalid':''} aria-invalid={Boolean(passwordFieldErrors.current_password)} type="password" value={passwords.current_password} onChange={e => { setPasswords({...passwords, current_password: e.target.value}); setPasswordFieldErrors(x=>({...x,current_password:''})) }} autoComplete="current-password"/>{passwordFieldErrors.current_password?<span className="field-error">{passwordFieldErrors.current_password}</span>:null}</label>
+          <label>New password <span className="required-mark">*</span><input className={passwordFieldErrors.new_password?'field-invalid':''} aria-invalid={Boolean(passwordFieldErrors.new_password)} type="password" value={passwords.new_password} onChange={e => { setPasswords({...passwords, new_password: e.target.value}); setPasswordFieldErrors(x=>({...x,new_password:''})) }} autoComplete="new-password"/>{passwordFieldErrors.new_password?<span className="field-error">{passwordFieldErrors.new_password}</span>:null}</label>
+          <label>Confirm new password <span className="required-mark">*</span><input className={passwordFieldErrors.confirm_password?'field-invalid':''} aria-invalid={Boolean(passwordFieldErrors.confirm_password)} type="password" value={passwords.confirm_password} onChange={e => { setPasswords({...passwords, confirm_password: e.target.value}); setPasswordFieldErrors(x=>({...x,confirm_password:''})) }} autoComplete="new-password"/>{passwordFieldErrors.confirm_password?<span className="field-error">{passwordFieldErrors.confirm_password}</span>:null}</label>
         </div>
       </Modal> : null}
     </div>

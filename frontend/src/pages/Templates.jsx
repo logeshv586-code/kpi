@@ -17,6 +17,7 @@ export default function Templates(){
   const [viewMode, setViewMode] = useState('hierarchy')
   const [previewTemplate, setPreviewTemplate] = useState(null)
   const [importForm, setImportForm] = useState({name: 'Imported KPI Template', designation_id: '', file: null})
+  const [importErrors, setImportErrors] = useState({})
   const navigate = useNavigate()
 
   const departments = useMemo(() => masters.flatMap(d => d.departments.map(dep => ({...dep, parent_division_id: d.id}))), [masters])
@@ -81,10 +82,12 @@ export default function Templates(){
   }
 
   async function importFile(){
-    if (!importForm.file){ setError('Choose an Excel or CSV file first.'); return }
-    if (!importForm.name.trim()){ setError('Enter a template name.'); return }
+    const errors = {}
+    if (!importForm.file) errors.file = 'Choose an Excel or CSV file.'
+    if (!importForm.name.trim()) errors.name = 'Template name is required.'
+    if (Object.keys(errors).length) { setImportErrors(errors); setError('Complete the required fields highlighted in red.'); return }
     try {
-      setError(''); setMessage('')
+      setError(''); setMessage(''); setImportErrors({})
       const ext = importForm.file.name.toLowerCase().split('.').pop()
       let data
       if (ext === 'csv') {
@@ -103,7 +106,7 @@ export default function Templates(){
       }
       setMessage(`Imported ${data.kras.length} KRA(s) as a draft template. Review before publishing.`)
       setShowImport(false)
-      setImportForm({name: 'Imported KPI Template', designation_id: '', file: null})
+      setImportForm({name: 'Imported KPI Template', designation_id: '', file: null}); setImportErrors({})
       load()
     } catch (e) {
       setError(getError(e))
@@ -163,14 +166,14 @@ export default function Templates(){
           <p className="muted small-copy">Field names: KRA Name, KRA Weight / Marks, KPI Name, Task Responsibility, Result Entry Type, Weight / Marks, Expected Target, Unit, Scoring Direction, Frequency, Measurement / Guidance, Custom Dropdown Results, Source, Weight Basis.</p>
           <button type="button" className="secondary" onClick={downloadTemplateSample} style={{marginBottom: '12px'}}><Download size={16}/>Download current KPI Template Excel format</button>
           <div className="form-grid">
-            <label>Template name<input value={importForm.name} onChange={e => setImportForm({...importForm, name: e.target.value})}/></label>
+            <label>Template name <span className="required-mark">*</span><input className={importErrors.name?'field-invalid':''} aria-invalid={Boolean(importErrors.name)} value={importForm.name} onChange={e => {setImportForm({...importForm, name: e.target.value});setImportErrors(x=>({...x,name:''}))}}/>{importErrors.name?<span className="field-error">{importErrors.name}</span>:null}</label>
             <label>Designation
               <select value={importForm.designation_id} onChange={e => setImportForm({...importForm, designation_id: e.target.value})}>
                 <option value="">Any designation</option>
                 {designations.map(x => <option key={x.id} value={x.id}>{x.label}</option>)}
               </select>
             </label>
-            <label>Excel / CSV file<input type="file" accept=".xlsx,.xls,.csv" onChange={e => setImportForm({...importForm, file: e.target.files?.[0] || null})}/></label>
+            <label>Excel / CSV file <span className="required-mark">*</span><input className={importErrors.file?'field-invalid':''} aria-invalid={Boolean(importErrors.file)} type="file" accept=".xlsx,.xls,.csv" onChange={e => {setImportForm({...importForm, file: e.target.files?.[0] || null});setImportErrors(x=>({...x,file:''}))}}/>{importErrors.file?<span className="field-error">{importErrors.file}</span>:null}</label>
           </div>
           <div className="footer-actions">
             <button className="secondary" onClick={() => setShowImport(false)}>Cancel</button>

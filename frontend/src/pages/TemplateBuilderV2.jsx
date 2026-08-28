@@ -41,6 +41,7 @@ export default function TemplateBuilderV2(){
   const editId=params.get('edit'),departmentParam=params.get('department'),designationParam=params.get('designation')
   const[masters,setMasters]=useState([]),[name,setName]=useState(''),[department,setDepartment]=useState(''),[designation,setDesignation]=useState('')
   const[kras,setKras]=useState([{name:'New KRA',weight:100,items:[newItem(100)]}]),[error,setError]=useState('')
+  const[fieldErrors,setFieldErrors]=useState({})
 
   const departments=useMemo(()=>masters.flatMap(parent=>parent.departments.map(dep=>({...dep,parent_division_id:parent.id}))).sort((a,b)=>a.name.localeCompare(b.name)),[masters])
   const selectedDepartment=departments.find(d=>String(d.id)===String(department))
@@ -190,8 +191,11 @@ export default function TemplateBuilderV2(){
   async function save(){
     setError('')
     try{
-      if(!name.trim())throw new Error('Template name is required')
-      if(!department)throw new Error('Select a department')
+      const errors={}
+      if(!name.trim())errors.name='Template name is required.'
+      if(!department)errors.department='Select a department.'
+      if(Object.keys(errors).length){setFieldErrors(errors);throw new Error('Complete the required fields highlighted in red.')}
+      setFieldErrors({})
       if(total>100.001)throw new Error(`KRA total cannot exceed 100. Current total: ${total}`)
       if(!kras.length)throw new Error('Add at least one KRA')
       kras.forEach(k=>{
@@ -219,13 +223,13 @@ export default function TemplateBuilderV2(){
     <Card>
       <div className="section-heading"><div><h3>Choose Department</h3><p className="muted small-copy">Department is the main hierarchy used to assign KPI templates.</p></div></div>
       <div className="form-grid" style={{gridTemplateColumns:'1fr 1fr'}}>
-        <label>Department *<select value={department} onChange={e=>{setDepartment(e.target.value);setDesignation('')}}><option value="">Select department</option>{departments.map(d=><option key={d.id} value={d.id}>{d.name}</option>)}</select></label>
+        <label>Department <span className="required-mark">*</span><select className={fieldErrors.department?'field-invalid':''} aria-invalid={Boolean(fieldErrors.department)} value={department} onChange={e=>{setDepartment(e.target.value);setDesignation('');setFieldErrors(x=>({...x,department:''}))}}><option value="">Select department</option>{departments.map(d=><option key={d.id} value={d.id}>{d.name}</option>)}</select>{fieldErrors.department?<span className="field-error">{fieldErrors.department}</span>:null}</label>
         <label>Role / designation<select value={designation} onChange={e=>setDesignation(e.target.value)} disabled={!department}><option value="">All roles in department</option>{designations.map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select></label>
       </div>
     </Card>
 
     <Card>
-      <div className="form-grid"><label>Template name<input value={name} onChange={e=>setName(e.target.value)} placeholder="e.g. Customer Support KPI"/></label><label>Department<input value={selectedDepartment?.name||''} disabled/></label><label>Total weight<input value={`${total} / 100`} disabled className={Math.abs(total-100)<0.001?'valid-field':'invalid-field'}/></label></div>
+      <div className="form-grid"><label>Template name <span className="required-mark">*</span><input className={fieldErrors.name?'field-invalid':''} aria-invalid={Boolean(fieldErrors.name)} value={name} onChange={e=>{setName(e.target.value);setFieldErrors(x=>({...x,name:''}))}} placeholder="e.g. Customer Support KPI"/>{fieldErrors.name?<span className="field-error">{fieldErrors.name}</span>:null}</label><label>Department<input value={selectedDepartment?.name||''} disabled/></label><label>Total weight<input value={`${total} / 100`} disabled className={Math.abs(total-100)<0.001?'valid-field':'invalid-field'}/></label></div>
       <div className="helper-strip"><strong>100-mark allocation:</strong> all KRA marks together cannot exceed 100. Adding a KRA automatically redistributes the available 100 marks; otherwise type values manually. Drafts may be below 100, but publishing requires exactly 100. <strong>Custom Dropdown:</strong> add as many custom result options/fields as needed for this KPI.</div>
     </Card>
 

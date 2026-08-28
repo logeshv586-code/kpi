@@ -29,6 +29,7 @@ export default function Reports(){
   const[draftTo,setDraftTo]=useState('')
   const[showRangeModal,setShowRangeModal]=useState(false)
   const[error,setError]=useState('')
+  const[rangeErrors,setRangeErrors]=useState({})
 
   const title=['superadmin','hr'].includes(user?.role)?'Performance Reports':user?.role==='manager'?'Team Performance Reports':'My Performance Report'
   const subtitle='Choose a From month and To month to view performance only for that selected period.'
@@ -80,9 +81,12 @@ export default function Reports(){
     setError('');setDraftFrom(fromMonth);setDraftTo(toMonth);setShowRangeModal(true)
   }
   function applyRange(){
-    if(!draftFrom||!draftTo){setError('Select both From month and To month.');return}
+    const errors={}
+    if(!draftFrom)errors.from='Select a From month.'
+    if(!draftTo)errors.to='Select a To month.'
+    if(Object.keys(errors).length){setRangeErrors(errors);setError('Complete the required fields highlighted in red.');return}
     if(monthKey(draftFrom)>monthKey(draftTo)){setError('From month must be before or the same as To month.');return}
-    setError('');setFromMonth(draftFrom);setToMonth(draftTo);setShowRangeModal(false)
+    setError('');setRangeErrors({});setFromMonth(draftFrom);setToMonth(draftTo);setShowRangeModal(false)
   }
 
   function exportCsv(){
@@ -108,9 +112,9 @@ export default function Reports(){
       <Card><div style={{fontSize:'0.9rem',fontWeight:700,color:'#1e293b',marginBottom:'14px'}}>Performance Matrix: <span style={{color:'#2563eb'}}>{rangeLabel}</span></div><div className="table-wrap"><table><thead><tr><th>Employee</th><th>Department</th><th>Designation</th><th>Report Period</th><th>Score</th><th>Rating Band</th></tr></thead><tbody>{rows.map(r=><tr key={r.user_id}><td><strong>{r.employee}</strong><div className="cell-help">{r.email}</div></td><td>{r.department||'—'}</td><td>{r.designation||'—'}</td><td>{rangeLabel}</td><td>{r.display_score!=null?<Score value={r.display_score}/>:<span className="muted">N/A</span>}</td><td><span className={`status-badge ${bandClass(r.display_band)}`}>{r.display_band}</span></td></tr>)}</tbody></table></div>{!rows.length?<div className="empty">No performance data found for this department and period.</div>:null}</Card>
     </>}
 
-    {showRangeModal?<Modal title="Select report period" onClose={()=>setShowRangeModal(false)} actions={<><button className="secondary" onClick={()=>setShowRangeModal(false)}>Cancel</button><button className="primary" onClick={applyRange} disabled={!draftFrom||!draftTo}>Apply From / To</button></>}>
+    {showRangeModal?<Modal title="Select report period" onClose={()=>setShowRangeModal(false)} actions={<><button className="secondary" onClick={()=>setShowRangeModal(false)}>Cancel</button><button className="primary" onClick={applyRange}>Apply From / To</button></>}>
       <div className="helper-strip" style={{margin:'0 0 16px'}}>Choose the first month and last month. Every available month between them will be included in the report.</div>
-      <div className="form-grid report-range-fields"><label>From month<select value={draftFrom} onChange={e=>{const value=e.target.value;setDraftFrom(value);if(draftTo&&monthKey(value)>monthKey(draftTo))setDraftTo(value)}}><option value="" disabled>Select first month</option>{availableMonths.map(m=><option key={m} value={m}>{m}</option>)}</select></label><label>To month<select value={draftTo} onChange={e=>setDraftTo(e.target.value)}><option value="" disabled>Select last month</option>{availableMonths.filter(m=>!draftFrom||monthKey(m)>=monthKey(draftFrom)).map(m=><option key={m} value={m}>{m}</option>)}</select></label></div>
+      <div className="form-grid report-range-fields"><label>From month <span className="required-mark">*</span><select className={rangeErrors.from?'field-invalid':''} aria-invalid={Boolean(rangeErrors.from)} value={draftFrom} onChange={e=>{const value=e.target.value;setDraftFrom(value);setRangeErrors(x=>({...x,from:''}));if(draftTo&&monthKey(value)>monthKey(draftTo))setDraftTo(value)}}><option value="" disabled>Select first month</option>{availableMonths.map(m=><option key={m} value={m}>{m}</option>)}</select>{rangeErrors.from?<span className="field-error">{rangeErrors.from}</span>:null}</label><label>To month <span className="required-mark">*</span><select className={rangeErrors.to?'field-invalid':''} aria-invalid={Boolean(rangeErrors.to)} value={draftTo} onChange={e=>{setDraftTo(e.target.value);setRangeErrors(x=>({...x,to:''}))}}><option value="" disabled>Select last month</option>{availableMonths.filter(m=>!draftFrom||monthKey(m)>=monthKey(draftFrom)).map(m=><option key={m} value={m}>{m}</option>)}</select>{rangeErrors.to?<span className="field-error">{rangeErrors.to}</span>:null}</label></div>
       {draftFrom&&draftTo?<div className="helper-strip" style={{marginTop:'14px'}}><strong>Selected:</strong> {draftFrom} → {draftTo}</div>:null}
     </Modal>:null}
   </>

@@ -27,8 +27,8 @@ from app.main import app
 client = TestClient(app)
 
 
-def login(email: str):
-    response = client.post("/api/auth/login", json={"email": email, "password": "Admin@123"})
+def login(email: str, password: str = "Admin@123"):
+    response = client.post("/api/auth/login", json={"email": email, "password": password})
     assert response.status_code == 200, response.text
     return {"Authorization": f"Bearer {response.json()['access_token']}"}
 
@@ -36,6 +36,27 @@ def login(email: str):
 admin = login("admin@eaglesoftware.in")
 hr = login("hr@eaglesoftware.in")
 assert client.post("/api/admin/reset-data", headers=hr, json={"confirm": "RESET"}).status_code == 403
+
+# Employee directory view permissions are self-service only: a regular user
+# may see their profile, but never other employee records or profile-edit APIs.
+employee_email = "project.employee@eaglesoftware.in"
+directory_user = next(u for u in client.get("/api/admin/users", headers=admin).json() if u["email"] == employee_email)
+assert client.patch(f"/api/admin/users/{directory_user['id']}", headers=admin, json={"access_permissions": {"tabs": ["employees"], "editable_tabs": []}}).status_code == 200
+# Set a known password so this regression remains independent of any demo-data
+# password changes made before the test runs.
+assert client.patch(f"/api/admin/users/{directory_user['id']}", headers=admin, json={"password": "InitialTemp@123"}).status_code == 200
+employee = login(employee_email, "InitialTemp@123")
+employee_directory = client.get("/api/admin/users", headers=employee)
+assert employee_directory.status_code == 200, employee_directory.text
+assert [u["id"] for u in employee_directory.json()] == [directory_user["id"]]
+assert client.patch(f"/api/admin/users/{directory_user['id']}", headers=employee, json={"name": "Unauthorized Edit"}).status_code == 403
+
+# A Super Admin can reset a forgotten password; HR must not be able to do so.
+assert client.patch(f"/api/admin/users/{directory_user['id']}", headers=hr, json={"password": "NewTemp@123"}).status_code == 403
+assert client.patch(f"/api/admin/users/{directory_user['id']}", headers=admin, json={"password": "NewTemp@123"}).status_code == 200
+assert client.post("/api/auth/change-password", headers=employee, json={"current_password": "InitialTemp@123", "new_password": "Employee@123"}).status_code == 400
+employee = login(employee_email, "NewTemp@123")
+assert client.post("/api/auth/change-password", headers=employee, json={"current_password": "NewTemp@123", "new_password": "Employee@123"}).status_code == 200
 
 rows = client.get("/api/kpi/my", headers=admin).json()
 assignment = next(x for x in rows if x["status"] == "draft")
