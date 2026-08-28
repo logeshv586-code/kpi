@@ -47,7 +47,11 @@ def validate_template(template: KpiTemplate, strict: bool = True) -> tuple[bool,
         return False, "Add at least one KRA"
 
     kra_total = round(sum(float(k.weight or 0) for k in template.kras), 4)
-    if abs(kra_total - 100) > 0.001:
+    # Drafts can be built incrementally, but no template may allocate more
+    # than the available 100 marks. Publishing requires the full allocation.
+    if kra_total > 100.001:
+        return False, f"KRA total cannot exceed 100. Current total: {kra_total}"
+    if strict and abs(kra_total - 100) > 0.001:
         return False, f"KRA total must equal 100. Current total: {kra_total}"
 
     for kra in template.kras:
@@ -58,7 +62,9 @@ def validate_template(template: KpiTemplate, strict: bool = True) -> tuple[bool,
         if not kra.items:
             return False, f"KRA '{kra.name}' must contain at least one KPI parameter"
         item_total = round(sum(float(i.weight or 0) for i in kra.items), 4)
-        if abs(item_total - float(kra.weight or 0)) > 0.001:
+        if item_total > float(kra.weight or 0) + 0.001:
+            return False, f"KPI weights inside '{kra.name}' cannot exceed {kra.weight}. Current total: {item_total}"
+        if strict and abs(item_total - float(kra.weight or 0)) > 0.001:
             return False, f"KPI weights inside '{kra.name}' must total {kra.weight}. Current total: {item_total}"
         for item in kra.items:
             if not item.question.strip():

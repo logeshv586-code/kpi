@@ -27,6 +27,15 @@ const newItem=(weight=100)=>({
   frequency:'Monthly',unit:'tasks',measurement:'',choice_options:[],source:'',weight_basis:'Configured by HR'
 })
 
+function ExpandingTextarea({value,onChange,...props}){
+  const resize=element=>{
+    if(!element)return
+    element.style.height='auto'
+    element.style.height=`${element.scrollHeight}px`
+  }
+  return <textarea {...props} className={`expanding-textarea ${props.className||''}`.trim()} rows={2} wrap="soft" value={value} ref={resize} onChange={event=>{resize(event.currentTarget);onChange(event)}}/>
+}
+
 export default function TemplateBuilderV2(){
   const[params]=useSearchParams(),navigate=useNavigate()
   const editId=params.get('edit'),departmentParam=params.get('department'),designationParam=params.get('designation')
@@ -134,6 +143,17 @@ export default function TemplateBuilderV2(){
     }))
   }
 
+  function addKra(){
+    setKras(current=>{
+      const next=[...current,{name:'New KRA',weight:0,items:[newItem(0)]}]
+      const kraWeights=splitWeight(100,next.length)
+      return next.map((kra,ki)=>{
+        const itemWeights=splitWeight(kraWeights[ki],kra.items.length)
+        return {...kra,weight:kraWeights[ki],items:kra.items.map((item,ii)=>({...item,weight:itemWeights[ii]}))}
+      })
+    })
+  }
+
   function validateItem(item,kraName){
     if(!item.question.trim())throw new Error(`${kraName}: every KPI needs a name`)
     if(Number(item.weight||0)<=0)throw new Error(`${item.question}: weight must be greater than 0`)
@@ -172,13 +192,13 @@ export default function TemplateBuilderV2(){
     try{
       if(!name.trim())throw new Error('Template name is required')
       if(!department)throw new Error('Select a department')
-      if(Math.abs(total-100)>0.001)throw new Error(`KRA total must equal 100. Current total: ${total}`)
+      if(total>100.001)throw new Error(`KRA total cannot exceed 100. Current total: ${total}`)
       if(!kras.length)throw new Error('Add at least one KRA')
       kras.forEach(k=>{
         if(!k.name.trim())throw new Error('Every KRA needs a name')
         if(!k.items.length)throw new Error(`${k.name}: add at least one KPI`)
         const subtotal=Number(k.items.reduce((s,i)=>s+Number(i.weight||0),0).toFixed(2))
-        if(Math.abs(subtotal-Number(k.weight))>0.001)throw new Error(`${k.name}: KPI weights must total ${k.weight}. Current total: ${subtotal}`)
+        if(subtotal>Number(k.weight)+0.001)throw new Error(`${k.name}: KPI weights cannot exceed ${k.weight}. Current total: ${subtotal}`)
         k.items.forEach(i=>validateItem(i,k.name))
       })
       const dep=departments.find(d=>String(d.id)===String(department))
@@ -206,20 +226,20 @@ export default function TemplateBuilderV2(){
 
     <Card>
       <div className="form-grid"><label>Template name<input value={name} onChange={e=>setName(e.target.value)} placeholder="e.g. Customer Support KPI"/></label><label>Department<input value={selectedDepartment?.name||''} disabled/></label><label>Total weight<input value={`${total} / 100`} disabled className={Math.abs(total-100)<0.001?'valid-field':'invalid-field'}/></label></div>
-      <div className="helper-strip"><strong>Custom Dropdown:</strong> add as many custom result options/fields as needed for this KPI. Click <strong>+ Add result</strong> or use quick preset scales below.</div>
+      <div className="helper-strip"><strong>100-mark allocation:</strong> all KRA marks together cannot exceed 100. Adding a KRA automatically redistributes the available 100 marks; otherwise type values manually. Drafts may be below 100, but publishing requires exactly 100. <strong>Custom Dropdown:</strong> add as many custom result options/fields as needed for this KPI.</div>
     </Card>
 
     <div className="stack">{kras.map((kra,ki)=><Card key={ki}>
-      <div className="kra-title"><div className="inline-fields"><input className="title-input" value={kra.name} onChange={e=>updateKra(ki,{name:e.target.value})}/><input className="weight-input" type="number" min="0" max="100" step="0.01" value={kra.weight} onChange={e=>updateKra(ki,{weight:Number(e.target.value)})}/><span>marks</span></div><div className="row-actions"><button className="secondary small" onClick={()=>balanceItems(ki)}><Equal size={14}/>Balance KPIs</button><button className="icon-button danger" onClick={()=>setKras(cur=>cur.filter((_,i)=>i!==ki))}><Trash2 size={15}/></button></div></div>
+      <div className="kra-title"><div className="inline-fields"><input className="title-input" value={kra.name} onChange={e=>updateKra(ki,{name:e.target.value})}/><input className="weight-input no-spinner" type="number" min="0" max="100" step="0.01" value={kra.weight} onChange={e=>updateKra(ki,{weight:Number(e.target.value)})}/><span>marks</span></div><div className="row-actions"><button className="secondary small" onClick={()=>balanceItems(ki)}><Equal size={14}/>Balance KPIs</button><button className="icon-button danger" onClick={()=>setKras(cur=>cur.filter((_,i)=>i!==ki))}><Trash2 size={15}/></button></div></div>
       <div className="dynamic-kpi-list">{kra.items.map((item,ii)=><div className="dynamic-kpi is-open" key={ii}>
         <div className="dynamic-kpi-head"><strong>KPI {ii+1}: {item.question||'Untitled KPI'}</strong><button className="icon-button danger" onClick={()=>updateKra(ki,{items:kra.items.filter((_,x)=>x!==ii)})}><Trash2 size={14}/></button></div>
         <div className="form-grid four">
-          <label className="span-2">KPI name<input value={item.question} onChange={e=>updateItem(ki,ii,{question:e.target.value})} placeholder="Enter KPI name"/></label>
-          <label className="span-2">Task responsibility<input value={item.task_responsibility} onChange={e=>updateItem(ki,ii,{task_responsibility:e.target.value})} placeholder="What should the employee complete?"/></label>
+          <label className="span-2">KPI name<ExpandingTextarea value={item.question} onChange={e=>updateItem(ki,ii,{question:e.target.value})} placeholder="Enter KPI name"/></label>
+          <label className="span-2">Task responsibility<ExpandingTextarea value={item.task_responsibility} onChange={e=>updateItem(ki,ii,{task_responsibility:e.target.value})} placeholder="What should the employee complete?"/></label>
           <label>Result entry type<select value={item.input_type} onChange={e=>changeInputType(ki,ii,e.target.value)}><option value="number">Number / Quantity</option><option value="percentage">Percentage</option><option value="choice">Custom Dropdown</option></select></label>
-          <label>Weight / marks<input type="number" min="0" max="100" step="0.01" value={item.weight} onChange={e=>updateItem(ki,ii,{weight:Number(e.target.value)})}/></label>
+          <label>Weight / marks<input type="text" inputMode="numeric" pattern="[0-9]*" value={item.weight} onChange={e=>{const digits=e.target.value.replace(/\D/g,'');updateItem(ki,ii,{weight:digits===''?0:Number(digits)})}}/></label>
 
-          {['number','percentage'].includes(item.input_type)?<><label>Expected target *<input type="number" min="0" step="0.01" value={item.target_value??''} onChange={e=>updateItem(ki,ii,{target_value:e.target.value})} placeholder={item.input_type==='percentage'?'100':'e.g. 100'}/></label><label>Unit<input value={item.unit} onChange={e=>updateItem(ki,ii,{unit:e.target.value})} placeholder={item.input_type==='percentage'?'%':'tasks / calls / cases'}/></label><label>Scoring direction<select value={item.direction} onChange={e=>updateItem(ki,ii,{direction:e.target.value})}><option value="higher">Higher result is better</option><option value="lower">Lower result is better</option></select></label></>:null}
+          {['number','percentage'].includes(item.input_type)?<><label>Expected target *<input className="no-spinner" type="number" min="0" step="0.01" value={item.target_value??''} onChange={e=>updateItem(ki,ii,{target_value:e.target.value})} placeholder={item.input_type==='percentage'?'100':'e.g. 100'}/></label><label>Unit<input value={item.unit} onChange={e=>updateItem(ki,ii,{unit:e.target.value})} placeholder={item.input_type==='percentage'?'%':'tasks / calls / cases'}/></label><label>Scoring direction<select value={item.direction} onChange={e=>updateItem(ki,ii,{direction:e.target.value})}><option value="higher">Higher result is better</option><option value="lower">Lower result is better</option></select></label></>:null}
 
           {item.input_type==='choice'?<div className="span-2" style={{border:'1px solid #dbeafe',background:'#f8fbff',borderRadius:'10px',padding:'12px'}}>
             <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:'8px',marginBottom:'10px',flexWrap:'wrap'}}>
@@ -241,14 +261,14 @@ export default function TemplateBuilderV2(){
           </div>:null}
 
           <label>Frequency<input value={item.frequency} onChange={e=>updateItem(ki,ii,{frequency:e.target.value})} placeholder="Monthly"/></label>
-          <label className="span-2">Measurement / guidance<input value={item.measurement} onChange={e=>updateItem(ki,ii,{measurement:e.target.value})} placeholder="Explain what should be measured"/></label>
-          <label>Source<input value={item.source} onChange={e=>updateItem(ki,ii,{source:e.target.value})} placeholder="Policy / task system / manager"/></label>
-          <label>Weight basis<input value={item.weight_basis} onChange={e=>updateItem(ki,ii,{weight_basis:e.target.value})}/></label>
+          <label className="span-2">Measurement / guidance<ExpandingTextarea value={item.measurement} onChange={e=>updateItem(ki,ii,{measurement:e.target.value})} placeholder="Explain what should be measured"/></label>
+          <label>Source<ExpandingTextarea value={item.source} onChange={e=>updateItem(ki,ii,{source:e.target.value})} placeholder="Policy / task system / manager"/></label>
+          <label>Weight basis<ExpandingTextarea value={item.weight_basis} onChange={e=>updateItem(ki,ii,{weight_basis:e.target.value})}/></label>
         </div>
       </div>)}</div>
       <button className="text-action" onClick={()=>updateKra(ki,{items:[...kra.items,newItem(10)]})}><Plus size={15}/>Add KPI parameter</button>
     </Card>)}</div>
 
-    <div className="footer-actions"><button className="secondary" onClick={()=>setKras(cur=>[...cur,{name:'New KRA',weight:0,items:[newItem(0)]}])}><Plus size={16}/>Add KRA</button><button className="primary" onClick={save}><Save size={16}/>{editId?'Save draft changes':'Save draft template'}</button></div>
+    <div className="footer-actions"><button className="secondary" onClick={addKra}><Plus size={16}/>Add KRA</button><button className="primary" onClick={save}><Save size={16}/>{editId?'Save draft changes':'Save draft template'}</button></div>
   </>
 }

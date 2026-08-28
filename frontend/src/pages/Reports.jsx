@@ -36,6 +36,7 @@ export default function Reports(){
   useEffect(()=>{api.get('/dashboard/monthly-matrix').then(r=>setData(r.data)).catch(e=>setError(getError(e)))},[])
 
   const availableMonths=useMemo(()=>[...(data?.months||[])].sort((a,b)=>monthKey(a)-monthKey(b)),[data])
+  const hasAvailableMonths=availableMonths.length>0
   const departments=useMemo(()=>['All',...new Set((data?.rows||[]).map(r=>r.department).filter(Boolean))].sort((a,b)=>a==='All'?-1:b==='All'?1:a.localeCompare(b)),[data])
 
   useEffect(()=>{
@@ -74,7 +75,10 @@ export default function Reports(){
     return{avg,highCount,total:valid.length,topDepartment}
   },[rows])
 
-  function openRange(){setDraftFrom(fromMonth);setDraftTo(toMonth);setShowRangeModal(true)}
+  function openRange(){
+    if(!hasAvailableMonths){setError('No report months are available yet. Create KPI cycles or performance data first.');return}
+    setError('');setDraftFrom(fromMonth);setDraftTo(toMonth);setShowRangeModal(true)
+  }
   function applyRange(){
     if(!draftFrom||!draftTo){setError('Select both From month and To month.');return}
     if(monthKey(draftFrom)>monthKey(draftTo)){setError('From month must be before or the same as To month.');return}
@@ -104,9 +108,9 @@ export default function Reports(){
       <Card><div style={{fontSize:'0.9rem',fontWeight:700,color:'#1e293b',marginBottom:'14px'}}>Performance Matrix: <span style={{color:'#2563eb'}}>{rangeLabel}</span></div><div className="table-wrap"><table><thead><tr><th>Employee</th><th>Department</th><th>Designation</th><th>Report Period</th><th>Score</th><th>Rating Band</th></tr></thead><tbody>{rows.map(r=><tr key={r.user_id}><td><strong>{r.employee}</strong><div className="cell-help">{r.email}</div></td><td>{r.department||'—'}</td><td>{r.designation||'—'}</td><td>{rangeLabel}</td><td>{r.display_score!=null?<Score value={r.display_score}/>:<span className="muted">N/A</span>}</td><td><span className={`status-badge ${bandClass(r.display_band)}`}>{r.display_band}</span></td></tr>)}</tbody></table></div>{!rows.length?<div className="empty">No performance data found for this department and period.</div>:null}</Card>
     </>}
 
-    {showRangeModal?<Modal title="Select report period" onClose={()=>setShowRangeModal(false)} actions={<><button className="secondary" onClick={()=>setShowRangeModal(false)}>Cancel</button><button className="primary" onClick={applyRange}>Apply From / To</button></>}>
+    {showRangeModal?<Modal title="Select report period" onClose={()=>setShowRangeModal(false)} actions={<><button className="secondary" onClick={()=>setShowRangeModal(false)}>Cancel</button><button className="primary" onClick={applyRange} disabled={!draftFrom||!draftTo}>Apply From / To</button></>}>
       <div className="helper-strip" style={{margin:'0 0 16px'}}>Choose the first month and last month. Every available month between them will be included in the report.</div>
-      <div className="form-grid" style={{gridTemplateColumns:'1fr 1fr'}}><label>From month<select value={draftFrom} onChange={e=>setDraftFrom(e.target.value)}>{availableMonths.map(m=><option key={m} value={m}>{m}</option>)}</select></label><label>To month<select value={draftTo} onChange={e=>setDraftTo(e.target.value)}>{availableMonths.map(m=><option key={m} value={m}>{m}</option>)}</select></label></div>
+      <div className="form-grid report-range-fields"><label>From month<select value={draftFrom} onChange={e=>{const value=e.target.value;setDraftFrom(value);if(draftTo&&monthKey(value)>monthKey(draftTo))setDraftTo(value)}}><option value="" disabled>Select first month</option>{availableMonths.map(m=><option key={m} value={m}>{m}</option>)}</select></label><label>To month<select value={draftTo} onChange={e=>setDraftTo(e.target.value)}><option value="" disabled>Select last month</option>{availableMonths.filter(m=>!draftFrom||monthKey(m)>=monthKey(draftFrom)).map(m=><option key={m} value={m}>{m}</option>)}</select></label></div>
       {draftFrom&&draftTo?<div className="helper-strip" style={{marginTop:'14px'}}><strong>Selected:</strong> {draftFrom} → {draftTo}</div>:null}
     </Modal>:null}
   </>

@@ -15,6 +15,11 @@ class LoginIn(BaseModel):
         return value
 
 
+class ChangePasswordIn(BaseModel):
+    current_password: str = Field(min_length=1)
+    new_password: str = Field(min_length=6)
+
+
 class UserOut(BaseModel):
     id: int
     employee_no: str | None = None

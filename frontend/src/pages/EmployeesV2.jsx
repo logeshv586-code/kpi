@@ -1,6 +1,6 @@
 import {useEffect, useMemo, useState} from 'react'
 import {ArrowDown, ArrowUp, ArrowUpDown, Download, FileUp, KeyRound, Pencil, ShieldAlert, Trash2, UserPlus} from 'lucide-react'
-import {Link} from 'react-router-dom'
+import {Link, useNavigate} from 'react-router-dom'
 import {api, downloadApiFile, getError} from '../lib/api'
 import {canAccessTab, useAuth} from '../lib/auth'
 import {Card, ErrorBox, Loader, Modal, PageHeader, Status} from '../components/UI'
@@ -27,8 +27,13 @@ const DEFAULT_SYSTEM_ROLES = [
 
 export default function EmployeesV2() {
   const {user} = useAuth()
+  const navigate = useNavigate()
   const isAdmin = canAccessTab(user, 'employees', true)
   const isSuperAdmin = user?.role === 'superadmin'
+  // Keep this client-side affordance aligned with the server-side import policy.
+  // Tab permissions may expose the Employees page to other roles, but importing
+  // creates accounts and is intentionally restricted to HR and Super Admin.
+  const canImportEmployees = ['superadmin', 'hr'].includes(user?.role)
 
   const [users, setUsers] = useState(null)
   const [masters, setMasters] = useState([])
@@ -62,7 +67,7 @@ export default function EmployeesV2() {
     employee_no: '',
     name: '',
     email: '',
-    password: 'Admin@123',
+    password: '',
     role: 'employee',
     manager_id: '',
     department_id: '',
@@ -127,7 +132,7 @@ export default function EmployeesV2() {
       employee_no: next,
       name: '',
       email: '',
-      password: 'Admin@123',
+      password: '',
       role: 'employee',
       manager_id: '',
       department_id: '',
@@ -179,6 +184,8 @@ export default function EmployeesV2() {
       setError('')
       setMessage('')
       if (!form.name.trim() || !form.email.trim()) throw new Error('Name and email are required.')
+      if (!editing && !form.password) throw new Error('Set a temporary password for the new employee.')
+      if (!editing && form.password.length < 6) throw new Error('The temporary password must contain at least 6 characters.')
       if (form.department_id && !form.designation_id) {
         throw new Error('Choose a designation for the selected department so the employee can be mapped correctly.')
       }
@@ -249,6 +256,107 @@ export default function EmployeesV2() {
     setQuickModal(type)
   }
 
+  function openDepartmentEdit() {
+    const selected = departments.find(d => String(d.id) === String(form.department_id))
+    if (!selected) return
+    setQuickForm({name: selected.name, department_id: String(selected.id), email: '', role: 'manager'})
+    setQuickModal('department_edit')
+  }
+
+  function openSystemRoleEdit() {
+    const selected = customRoles.find(role => role.id === form.role)
+    if (!selected) return
+    setQuickForm({name: selected.name, role_id: selected.id, email: '', department_id: '', role: 'manager'})
+    setQuickModal('system_role_edit')
+  }
+
+  function deleteSelectedSystemRole() {
+    const selected = customRoles.find(role => role.id === form.role)
+    if (!selected || !window.confirm(`Delete custom system role '${selected.name}'?`)) return
+    const updated = customRoles.filter(role => role.id !== selected.id)
+    setCustomRoles(updated)
+    localStorage.setItem('kpi_custom_system_roles', JSON.stringify(updated))
+    setForm(f => ({...f, role: 'employee'}))
+    setMessage(`Deleted custom system role '${selected.name}'`)
+  }
+
+  function openDesignationEdit() {
+    const selected = designations.find(designation => String(designation.id) === String(form.designation_id))
+    if (!selected) return
+    setQuickForm({name: selected.name, designation_id: String(selected.id), email: '', department_id: form.department_id, role: 'manager'})
+    setQuickModal('designation_edit')
+  }
+
+  async function deleteSelectedDesignation() {
+    const selected = designations.find(designation => String(designation.id) === String(form.designation_id))
+    if (!selected || !window.confirm(`Delete designation '${selected.name}'? Employees and KPI templates must be moved first.`)) return
+    try {
+      setError('')
+      await api.delete(`/admin/designations/${selected.id}`)
+      await loadMasters()
+      setForm(f => ({...f, designation_id: ''}))
+      setMessage(`Deleted designation '${selected.name}'`)
+    } catch (e) {
+      setError(getError(e))
+    }
+  }
+
+  function openManagerEdit() {
+    const selected = (users || []).find(manager => String(manager.id) === String(form.manager_id))
+    if (!selected) return
+    setQuickForm({name: selected.name, email: selected.email, user_id: String(selected.id), department_id: '', role: selected.role || 'manager'})
+    setQuickModal('manager_edit')
+  }
+
+  async function deleteSelectedManager() {
+    const selected = (users || []).find(manager => String(manager.id) === String(form.manager_id))
+    if (!selected || !window.confirm(`Delete manager '${selected.name}'? Their direct reports will be unassigned.`)) return
+    try {
+      setError('')
+      await api.delete(`/admin/users/${selected.id}`)
+      await loadUsers()
+      setForm(f => ({...f, manager_id: ''}))
+      setMessage(`Deleted manager '${selected.name}'`)
+    } catch (e) {
+      setError(getError(e))
+    }
+  }
+
+  function editSelectedTemplate() {
+    if (!form.kpi_template_id) return
+    if (window.confirm('Open the selected KPI template for editing? Unsaved employee changes will be lost.')) {
+      navigate(`/templates/new?edit=${form.kpi_template_id}`)
+    }
+  }
+
+  async function deleteSelectedTemplate() {
+    const selected = templates.find(template => String(template.id) === String(form.kpi_template_id))
+    if (!selected || !window.confirm(`Delete KPI template '${selected.name}'? Associated assignments will also be removed.`)) return
+    try {
+      setError('')
+      await api.delete(`/kpi/templates/${selected.id}`)
+      await loadTemplates()
+      setForm(f => ({...f, kpi_template_id: ''}))
+      setMessage(`Deleted KPI template '${selected.name}'`)
+    } catch (e) {
+      setError(getError(e))
+    }
+  }
+
+  async function deleteSelectedDepartment() {
+    const selected = departments.find(d => String(d.id) === String(form.department_id))
+    if (!selected || !window.confirm(`Delete department '${selected.name}'? This works only when it has no designations or directly assigned KPI templates.`)) return
+    try {
+      setError('')
+      await api.delete(`/admin/departments/${selected.id}`)
+      await loadMasters()
+      setForm(f => ({...f, department_id: '', designation_id: ''}))
+      setMessage(`Deleted department '${selected.name}'`)
+    } catch (e) {
+      setError(getError(e))
+    }
+  }
+
   async function saveQuickAdd() {
     try {
       setError('')
@@ -266,6 +374,17 @@ export default function EmployeesV2() {
         }
         setForm(f => ({...f, role: roleId}))
         setMessage(`Added new System Role '${title}'`)
+      } else if (quickModal === 'system_role_edit') {
+        const title = quickForm.name.trim()
+        const selected = customRoles.find(role => role.id === quickForm.role_id)
+        if (!title || !selected) return
+        const roleId = title.toLowerCase().replace(/[^a-z0-9]+/g, '_')
+        if (roleId !== selected.id && customRoles.some(role => role.id === roleId)) throw new Error('A custom system role with that name already exists.')
+        const updated = customRoles.map(role => role.id === selected.id ? {id: roleId, name: title} : role)
+        setCustomRoles(updated)
+        localStorage.setItem('kpi_custom_system_roles', JSON.stringify(updated))
+        setForm(f => ({...f, role: roleId}))
+        setMessage(`System Role renamed to '${title}'`)
       } else if (quickModal === 'department') {
         const depName = quickForm.name.trim()
         if (!depName) return
@@ -274,6 +393,13 @@ export default function EmployeesV2() {
         await loadMasters()
         setForm(f => ({...f, department_id: String(data.id), designation_id: ''}))
         setMessage(`Added new Department '${depName}'`)
+      } else if (quickModal === 'department_edit') {
+        const depName = quickForm.name.trim()
+        if (!depName || !quickForm.department_id) return
+        const {data} = await api.put(`/admin/departments/${quickForm.department_id}`, {name: depName})
+        await loadMasters()
+        setForm(f => ({...f, department_id: String(data.id)}))
+        setMessage(`Department renamed to '${data.name}'`)
       } else if (quickModal === 'designation') {
         const desigName = quickForm.name.trim()
         if (!desigName) return
@@ -282,6 +408,13 @@ export default function EmployeesV2() {
         await loadMasters()
         setForm(f => ({...f, department_id: targetDepId ? String(targetDepId) : f.department_id, designation_id: String(data.id)}))
         setMessage(`Added new Designation/Role '${desigName}'`)
+      } else if (quickModal === 'designation_edit') {
+        const desigName = quickForm.name.trim()
+        if (!desigName || !quickForm.designation_id) return
+        const {data} = await api.put(`/admin/designations/${quickForm.designation_id}`, {name: desigName})
+        await loadMasters()
+        setForm(f => ({...f, designation_id: String(data.id)}))
+        setMessage(`Designation renamed to '${data.name}'`)
       } else if (quickModal === 'manager') {
         const mgrName = quickForm.name.trim()
         const mgrEmail = quickForm.email.trim() || `${mgrName.toLowerCase().replace(/[^a-z0-9]+/g, '.')}@eaglesoftware.in`
@@ -298,6 +431,12 @@ export default function EmployeesV2() {
         await loadUsers()
         setForm(f => ({...f, manager_id: String(data.id)}))
         setMessage(`Added new Manager '${mgrName}'`)
+      } else if (quickModal === 'manager_edit') {
+        const mgrName = quickForm.name.trim()
+        if (!mgrName || !quickForm.user_id) return
+        await api.patch(`/admin/users/${quickForm.user_id}`, {name: mgrName, email: quickForm.email.trim(), role: quickForm.role})
+        await loadUsers()
+        setMessage(`Manager '${mgrName}' updated`)
       }
       setQuickModal(null)
     } catch (e) {
@@ -323,7 +462,9 @@ export default function EmployeesV2() {
       const fd = new FormData()
       fd.append('file', importFile)
       fd.append('preview', 'false')
-      const {data} = await api.post('/admin/import-employees-excel-v2', fd, {headers: {'Content-Type': 'multipart/form-data'}})
+      // Do not set Content-Type manually: Axios adds the required multipart
+      // boundary in the browser, while the shared API client adds the bearer token.
+      const {data} = await api.post('/admin/import-employees-excel-v2', fd)
       setMessage(`Imported ${data.created} employee(s); ${data.skipped} skipped.`)
       setImportOpen(false)
       setImportFile(null)
@@ -343,10 +484,12 @@ export default function EmployeesV2() {
         actions={
           isAdmin ? (
             <div className="row-actions">
-              <button className="secondary" onClick={() => setImportOpen(true)}>
-                <FileUp size={16} />
-                Import Excel/CSV
-              </button>
+              {canImportEmployees ? (
+                <button className="secondary" onClick={() => setImportOpen(true)}>
+                  <FileUp size={16} />
+                  Import Excel/CSV
+                </button>
+              ) : null}
               <button className="primary" onClick={openAdd}>
                 <UserPlus size={16} />
                 Add Employee
@@ -488,9 +631,9 @@ export default function EmployeesV2() {
               />
             </label>
             <label>
-              {editing ? 'New Password (optional)' : 'Temporary Password'}
+              {editing ? 'New Password (optional)' : 'Temporary Password * (minimum 6 characters)'}
               <div style={{display: 'flex', gap: '6px'}}>
-                <input value={form.password} onChange={e => setForm({...form, password: e.target.value})} />
+                <input type="password" value={form.password} onChange={e => setForm({...form, password: e.target.value})} autoComplete="new-password" />
                 <button type="button" className="secondary icon-button" onClick={generatePassword}>
                   <KeyRound size={14} />
                 </button>
@@ -501,9 +644,7 @@ export default function EmployeesV2() {
             <label>
               <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
                 <span>System Role</span>
-                {isSuperAdmin ? <button type="button" className="text-action" style={{padding: 0, fontSize: '0.8rem'}} onClick={() => openQuickModal('system_role')}>
-                  + Add System Role
-                </button> : null}
+                {isSuperAdmin ? <span style={{display: 'flex', gap: '10px'}}>{customRoles.some(role => role.id === form.role) ? <><button type="button" className="text-action" style={{padding: 0, fontSize: '0.8rem'}} onClick={openSystemRoleEdit}>Edit System Role</button><button type="button" className="text-action" style={{padding: 0, fontSize: '0.8rem', color: '#dc2626'}} onClick={deleteSelectedSystemRole}>Delete System Role</button></> : null}<button type="button" className="text-action" style={{padding: 0, fontSize: '0.8rem'}} onClick={() => openQuickModal('system_role')}>+ Add System Role</button></span> : null}
               </div>
               <select value={form.role} disabled={!isSuperAdmin} onChange={e => setForm({...form, role: e.target.value})}>
                 {allSystemRoles.map(r => (
@@ -518,9 +659,13 @@ export default function EmployeesV2() {
             <label className="span-2">
               <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
                 <span>Department</span>
-                <button type="button" className="text-action" style={{padding: 0, fontSize: '0.8rem'}} onClick={() => openQuickModal('department')}>
-                  + Add Department
-                </button>
+                <span style={{display: 'flex', gap: '10px'}}>
+                  {isSuperAdmin && form.department_id ? <button type="button" className="text-action" style={{padding: 0, fontSize: '0.8rem'}} onClick={openDepartmentEdit}>Edit Department</button> : null}
+                  {isSuperAdmin && form.department_id ? <button type="button" className="text-action" style={{padding: 0, fontSize: '0.8rem', color: '#dc2626'}} onClick={deleteSelectedDepartment}>Delete Department</button> : null}
+                  <button type="button" className="text-action" style={{padding: 0, fontSize: '0.8rem'}} onClick={() => openQuickModal('department')}>
+                    + Add Department
+                  </button>
+                </span>
               </div>
               <select
                 value={form.department_id}
@@ -539,9 +684,11 @@ export default function EmployeesV2() {
             <label className="span-2">
               <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
                 <span>Designation / Role</span>
-                <button type="button" className="text-action" style={{padding: 0, fontSize: '0.8rem'}} onClick={() => openQuickModal('designation')}>
-                  + Add Designation / Role
-                </button>
+                <span style={{display: 'flex', gap: '10px'}}>
+                  {isSuperAdmin && form.designation_id ? <button type="button" className="text-action" style={{padding: 0, fontSize: '0.8rem'}} onClick={openDesignationEdit}>Edit Designation</button> : null}
+                  {isSuperAdmin && form.designation_id ? <button type="button" className="text-action" style={{padding: 0, fontSize: '0.8rem', color: '#dc2626'}} onClick={deleteSelectedDesignation}>Delete Designation</button> : null}
+                  <button type="button" className="text-action" style={{padding: 0, fontSize: '0.8rem'}} onClick={() => openQuickModal('designation')}>+ Add Designation / Role</button>
+                </span>
               </div>
               <select
                 value={form.designation_id}
@@ -558,7 +705,10 @@ export default function EmployeesV2() {
 
             {form.role !== 'superadmin' ? (
               <label className="span-2">
-                KPI Template
+                <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
+                  <span>KPI Template</span>
+                  {isSuperAdmin && form.kpi_template_id ? <span style={{display: 'flex', gap: '10px'}}><button type="button" className="text-action" style={{padding: 0, fontSize: '0.8rem'}} onClick={editSelectedTemplate}>Edit Template</button><button type="button" className="text-action" style={{padding: 0, fontSize: '0.8rem', color: '#dc2626'}} onClick={deleteSelectedTemplate}>Delete Template</button></span> : null}
+                </div>
                 <select
                   value={form.kpi_template_id}
                   onChange={e => setForm({...form, kpi_template_id: e.target.value})}
@@ -596,9 +746,7 @@ export default function EmployeesV2() {
             <label className="span-2">
               <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
                 <span>Reporting Manager</span>
-                {isSuperAdmin ? <button type="button" className="text-action" style={{padding: 0, fontSize: '0.8rem'}} onClick={() => openQuickModal('manager')}>
-                  + Add Manager
-                </button> : null}
+                {isSuperAdmin ? <span style={{display: 'flex', gap: '10px'}}>{form.manager_id ? <><button type="button" className="text-action" style={{padding: 0, fontSize: '0.8rem'}} onClick={openManagerEdit}>Edit Manager</button><button type="button" className="text-action" style={{padding: 0, fontSize: '0.8rem', color: '#dc2626'}} onClick={deleteSelectedManager}>Delete Manager</button></> : null}<button type="button" className="text-action" style={{padding: 0, fontSize: '0.8rem'}} onClick={() => openQuickModal('manager')}>+ Add Manager</button></span> : null}
               </div>
               <select value={form.manager_id} onChange={e => setForm({...form, manager_id: e.target.value})}>
                 <option value="">None</option>
@@ -621,10 +769,18 @@ export default function EmployeesV2() {
           title={
             quickModal === 'system_role'
               ? 'Add System Role'
+              : quickModal === 'system_role_edit'
+              ? 'Edit System Role'
               : quickModal === 'department'
               ? 'Add Department'
+              : quickModal === 'department_edit'
+              ? 'Edit Department'
               : quickModal === 'designation'
               ? 'Add Designation / Role'
+              : quickModal === 'designation_edit'
+              ? 'Edit Designation / Role'
+              : quickModal === 'manager_edit'
+              ? 'Edit Reporting Manager'
               : 'Add Reporting Manager'
           }
           onClose={() => setQuickModal(null)}
@@ -634,7 +790,7 @@ export default function EmployeesV2() {
                 Cancel
               </button>
               <button className="primary" onClick={saveQuickAdd} disabled={!quickForm.name.trim()}>
-                Add {quickModal === 'system_role' ? 'System Role' : quickModal === 'department' ? 'Department' : quickModal === 'designation' ? 'Designation' : 'Manager'}
+                {['department_edit', 'designation_edit', 'system_role_edit', 'manager_edit'].includes(quickModal) ? 'Save Changes' : `Add ${quickModal === 'system_role' ? 'System Role' : quickModal === 'department' ? 'Department' : quickModal === 'designation' ? 'Designation' : 'Manager'}`}
               </button>
             </>
           }
@@ -643,9 +799,15 @@ export default function EmployeesV2() {
             <label>
               {quickModal === 'system_role'
                 ? 'System Role Name *'
+                : quickModal === 'system_role_edit'
+                ? 'System Role Name *'
                 : quickModal === 'department'
                 ? 'Department Name *'
+                : quickModal === 'department_edit'
+                ? 'Department Name *'
                 : quickModal === 'designation'
+                ? 'Designation / Role Title *'
+                : quickModal === 'designation_edit'
                 ? 'Designation / Role Title *'
                 : 'Manager Full Name *'}
               <input
@@ -655,9 +817,15 @@ export default function EmployeesV2() {
                 placeholder={
                   quickModal === 'system_role'
                     ? 'e.g. Lead Auditor'
+                    : quickModal === 'system_role_edit'
+                    ? 'e.g. Lead Auditor'
                     : quickModal === 'department'
                     ? 'e.g. Quality Assurance'
+                    : quickModal === 'department_edit'
+                    ? 'e.g. Operations'
                     : quickModal === 'designation'
+                    ? 'e.g. Senior Tech Lead'
+                    : quickModal === 'designation_edit'
                     ? 'e.g. Senior Tech Lead'
                     : 'e.g. Rajesh Kumar'
                 }
@@ -681,7 +849,7 @@ export default function EmployeesV2() {
               </label>
             ) : null}
 
-            {quickModal === 'manager' ? (
+            {['manager', 'manager_edit'].includes(quickModal) ? (
               <>
                 <label>
                   Manager Email (Optional)

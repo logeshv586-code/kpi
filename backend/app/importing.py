@@ -167,10 +167,16 @@ def create_template_from_import_rows(db: Session, name: str, designation_id: int
     db.add(template)
     db.flush()
 
+    # Keep an explicit list of only the KRAs created by this import.  Do not
+    # rely on a relationship collection that may already be populated in a
+    # long-lived session; that could combine an older template's KRAs with the
+    # uploaded rows and re-normalize both sets of marks.
+    imported_kras: list[Kra] = []
     for kra_name, kra_rows in groups.items():
         kra_weight = float(kra_weights[kra_name])
-        kra = Kra(template_id=template.id, name=kra_name, weight=kra_weight)
-        db.add(kra)
+        kra = Kra(name=kra_name, weight=kra_weight)
+        template.kras.append(kra)
+        imported_kras.append(kra)
         db.flush()
         source_item_weights = [parse_number(r.get("kpi_weight")) for r in kra_rows]
         use_source_items = all(v is not None for v in source_item_weights) and abs(sum(v or 0 for v in source_item_weights) - kra_weight) <= 0.01
@@ -223,7 +229,7 @@ def create_template_from_import_rows(db: Session, name: str, designation_id: int
     db.flush()
 
     # Re-normalize template KRA weights so total KRA weight strictly equals 100 marks
-    kra_list = list(template.kras)
+    kra_list = imported_kras
     if kra_list:
         total_k_weight = sum(float(k.weight or 0) for k in kra_list)
         if total_k_weight > 0 and abs(total_k_weight - 100) > 0.01:

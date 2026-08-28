@@ -84,6 +84,46 @@ def add_department(payload: MasterCreate, db: Session = Depends(get_db), user=De
     return {"id": obj.id, "name": obj.name}
 
 
+@router.put("/departments/{department_id}")
+def update_department(department_id: int, payload: MasterCreate, db: Session = Depends(get_db), user=Depends(superadmin_only)):
+    """Rename a department without changing its division, users, or roles."""
+    department = db.get(Department, department_id)
+    if not department:
+        raise HTTPException(404, "Department not found")
+    new_name = payload.name.strip()
+    duplicate = db.scalar(
+        select(Department).where(
+            Department.id != department_id,
+            Department.division_id == department.division_id,
+            Department.name == new_name,
+        )
+    )
+    if duplicate:
+        raise HTTPException(409, "Department already exists in this division")
+    old_name = department.name
+    department.name = new_name
+    audit(db, user.id, "update", "department", department.id, {"old_name": old_name, "name": new_name})
+    _commit_or_conflict(db, "Department already exists in this division")
+    return {"id": department.id, "name": department.name}
+
+
+@router.delete("/departments/{department_id}")
+def delete_department(department_id: int, db: Session = Depends(get_db), user=Depends(superadmin_only)):
+    """Remove an unused department; populated departments must be kept intact."""
+    department = db.get(Department, department_id)
+    if not department:
+        raise HTTPException(404, "Department not found")
+    if db.scalar(select(Designation.id).where(Designation.department_id == department_id)):
+        raise HTTPException(409, "Cannot delete this department because it still has designations. Remove or move its designations first.")
+    if db.scalar(select(KpiTemplate.id).where(KpiTemplate.department_id == department_id)):
+        raise HTTPException(409, "Cannot delete this department because KPI templates are assigned directly to it.")
+    old_name = department.name
+    db.delete(department)
+    audit(db, user.id, "delete", "department", department_id, {"name": old_name})
+    db.commit()
+    return {"ok": True}
+
+
 @router.post("/designations")
 def add_designation(payload: MasterCreate, db: Session = Depends(get_db), user=Depends(require_tab_permission("employees", edit=True))):
     parent_id = payload.parent_id
@@ -107,6 +147,44 @@ def add_designation(payload: MasterCreate, db: Session = Depends(get_db), user=D
     audit(db, user.id, "create", "designation", obj.id, {"name": obj.name})
     _commit_or_conflict(db, "Designation already exists in this department")
     return {"id": obj.id, "name": obj.name}
+
+
+@router.put("/designations/{designation_id}")
+def update_designation(designation_id: int, payload: MasterCreate, db: Session = Depends(get_db), user=Depends(superadmin_only)):
+    designation = db.get(Designation, designation_id)
+    if not designation:
+        raise HTTPException(404, "Designation not found")
+    new_name = payload.name.strip()
+    duplicate = db.scalar(
+        select(Designation).where(
+            Designation.id != designation_id,
+            Designation.department_id == designation.department_id,
+            Designation.name == new_name,
+        )
+    )
+    if duplicate:
+        raise HTTPException(409, "Designation already exists in this department")
+    old_name = designation.name
+    designation.name = new_name
+    audit(db, user.id, "update", "designation", designation.id, {"old_name": old_name, "name": new_name})
+    _commit_or_conflict(db, "Designation already exists in this department")
+    return {"id": designation.id, "name": designation.name}
+
+
+@router.delete("/designations/{designation_id}")
+def delete_designation(designation_id: int, db: Session = Depends(get_db), user=Depends(superadmin_only)):
+    designation = db.get(Designation, designation_id)
+    if not designation:
+        raise HTTPException(404, "Designation not found")
+    if db.scalar(select(User.id).where(User.designation_id == designation_id)):
+        raise HTTPException(409, "Cannot delete this designation because employees are assigned to it. Move those employees first.")
+    if db.scalar(select(KpiTemplate.id).where(KpiTemplate.designation_id == designation_id)):
+        raise HTTPException(409, "Cannot delete this designation because KPI templates are assigned to it.")
+    old_name = designation.name
+    db.delete(designation)
+    audit(db, user.id, "delete", "designation", designation_id, {"name": old_name})
+    db.commit()
+    return {"ok": True}
 
 
 @router.get("/users")

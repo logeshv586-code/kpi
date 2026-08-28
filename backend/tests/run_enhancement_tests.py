@@ -105,6 +105,51 @@ buf = BytesIO(); wb.save(buf); buf.seek(0)
 template = client.post("/api/kpi/templates/import-excel", headers=admin, data={"name": "Imported Test Template"}, files={"file": ("template.xlsx", buf.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")})
 assert template.status_code == 200, template.text
 assert template.json()["total_weight"] == 100
+assert len(template.json()["kras"]) == 1
+duplicate_import = client.post("/api/kpi/templates/import-excel", headers=admin, data={"name": "Imported Test Template"}, files={"file": ("template.xlsx", buf.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")})
+assert duplicate_import.status_code == 409, duplicate_import.text
+
+# Saving an edited draft must not keep its deleted KRA objects in the ORM
+# collection.  Previously the second PUT validated 10 old + 10 new marks as
+# 20 and returned HTTP 400; drafts are also intentionally allowed to be
+# incomplete until publish.
+draft_payload = {
+    "name": "Incremental Draft Test",
+    "division_id": None,
+    "department_id": None,
+    "designation_id": None,
+    "kras": [{
+        "name": "Delivery",
+        "weight": 10,
+        "items": [{
+            "question": "Complete planned tasks",
+            "input_type": "number",
+            "weight": 10,
+            "target_value": 10,
+            "direction": "higher",
+            "options": {},
+        }],
+    }],
+}
+draft_id = template.json()["id"]
+# The normal lifecycle is publish -> unpublish -> edit draft -> publish again.
+published = client.post(f"/api/kpi/templates/{draft_id}/publish", headers=admin)
+assert published.status_code == 200, published.text
+unpublished = client.post(f"/api/kpi/templates/{draft_id}/unpublish", headers=admin)
+assert unpublished.status_code == 200, unpublished.text
+assert unpublished.json()["status"] == "draft"
+first_draft_save = client.put(f"/api/kpi/templates/{draft_id}", headers=admin, json=draft_payload)
+assert first_draft_save.status_code == 200, first_draft_save.text
+second_draft_save = client.put(f"/api/kpi/templates/{draft_id}", headers=admin, json=draft_payload)
+assert second_draft_save.status_code == 200, second_draft_save.text
+assert second_draft_save.json()["total_weight"] == 10
+assert client.post(f"/api/kpi/templates/{draft_id}/publish", headers=admin).status_code == 400
+complete_payload = {**draft_payload, "kras": [{
+    **draft_payload["kras"][0], "weight": 100,
+    "items": [{**draft_payload["kras"][0]["items"][0], "weight": 100}],
+}]}
+assert client.put(f"/api/kpi/templates/{draft_id}", headers=admin, json=complete_payload).status_code == 200
+assert client.post(f"/api/kpi/templates/{draft_id}/publish", headers=admin).status_code == 200
 
 # Employee workbook preview.
 wb = Workbook(); ws = wb.active
@@ -114,6 +159,25 @@ buf = BytesIO(); wb.save(buf); buf.seek(0)
 employees = client.post("/api/admin/import-employees-excel", headers=admin, data={"preview": "true"}, files={"file": ("employees.xlsx", buf.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")})
 assert employees.status_code == 200, employees.text
 assert employees.json()["valid_rows"] == 1
+
+# Super Admin can rename and remove an unused department from the employee form.
+division_id = client.get("/api/admin/masters", headers=admin).json()[0]["id"]
+department = client.post("/api/admin/departments", headers=admin, json={"name": "Rename Test Department", "parent_id": division_id})
+assert department.status_code == 200, department.text
+department_id = department.json()["id"]
+renamed = client.put(f"/api/admin/departments/{department_id}", headers=admin, json={"name": "Renamed Test Department"})
+assert renamed.status_code == 200, renamed.text
+assert renamed.json()["name"] == "Renamed Test Department"
+designation = client.post("/api/admin/designations", headers=admin, json={"name": "Rename Test Designation", "parent_id": department_id})
+assert designation.status_code == 200, designation.text
+designation_id = designation.json()["id"]
+renamed_designation = client.put(f"/api/admin/designations/{designation_id}", headers=admin, json={"name": "Renamed Test Designation"})
+assert renamed_designation.status_code == 200, renamed_designation.text
+assert renamed_designation.json()["name"] == "Renamed Test Designation"
+removed_designation = client.delete(f"/api/admin/designations/{designation_id}", headers=admin)
+assert removed_designation.status_code == 200, removed_designation.text
+removed_department = client.delete(f"/api/admin/departments/{department_id}", headers=admin)
+assert removed_department.status_code == 200, removed_department.text
 
 # KPI PDF summary export.
 pdf_export = client.get(f"/api/kpi/assignments/{assignment['id']}/pdf", headers=admin)
@@ -135,7 +199,9 @@ print("PASS: authentication and role restriction")
 print("PASS: XLSX/PDF upload + parsing + KPI matching")
 print("PASS: evidence_file_id persistence")
 print("PASS: Excel template import")
+print("PASS: publish, unpublish, repeated draft edit, and republish lifecycle")
 print("PASS: employee Excel preview")
+print("PASS: Super Admin department/designation rename and safe delete")
 print("PASS: KPI PDF export")
 print("PASS: Super Admin transactional data reset")
 print("ALL KPI v1.2 ENHANCEMENT TESTS PASSED")

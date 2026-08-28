@@ -58,6 +58,23 @@ def _validate_scope(payload: TemplateIn, db: Session):
         raise HTTPException(400, "Selected division was not found")
 
 
+def _reject_duplicate_import(db: Session, name: str, designation_id: int | None):
+    """Avoid creating a second identical import by accident.
+
+    Re-importing is not an update operation: the user should open the existing
+    draft and edit it instead.  The name and designation scope identify that
+    import safely without touching unrelated templates.
+    """
+    existing = db.scalar(
+        select(KpiTemplate).where(
+            KpiTemplate.name == name.strip(),
+            KpiTemplate.designation_id == designation_id,
+        )
+    )
+    if existing:
+        raise HTTPException(409, f"A template named '{name.strip()}' already exists for this role. Open and edit that draft instead of importing it again.")
+
+
 def _template_matches_employee(template: KpiTemplate, employee: User):
     designation = employee.designation
     department = designation.department if designation else None
@@ -83,6 +100,12 @@ def _employee_template_override(db: Session, employee: User):
     if not template or template.status != TemplateStatus.active:
         return None
     return template if validate_template(template, strict=True)[0] else None
+
+
+def _require_published_assignment_template(assignment: KpiAssignment):
+    """Only published templates may be filled in or submitted by employees."""
+    if assignment.template.status != TemplateStatus.active:
+        raise HTTPException(409, "This KPI template has not been published. It cannot be filled in or submitted until HR publishes it.")
 
 
 def template_json(t: KpiTemplate):
@@ -188,13 +211,15 @@ def create_template(payload: TemplateIn, db: Session = Depends(get_db), user=Dep
     db.add(t)
     db.flush()
     for kra_in in payload.kras:
-        kra = Kra(template_id=t.id, name=kra_in.name.strip(), weight=kra_in.weight)
-        db.add(kra)
+        # Attach through the relationship so the template being validated is
+        # precisely the one KRA list supplied in this request.  This mirrors
+        # the update path and avoids stale/duplicated relationship state.
+        kra = Kra(name=kra_in.name.strip(), weight=kra_in.weight)
+        t.kras.append(kra)
         db.flush()
         for item in kra_in.items:
             db.add(KpiItem(kra_id=kra.id, **item.model_dump()))
     db.flush()
-    t = _load_template(db, t.id)
     valid, msg = validate_template(t, strict=False)
     if not valid:
         db.rollback()
@@ -214,12 +239,15 @@ def update_template(template_id: int, payload: TemplateIn, db: Session = Depends
     t.division_id = payload.division_id
     t.department_id = payload.department_id
     t.designation_id = payload.designation_id
-    for kra in list(t.kras):
-        db.delete(kra)
+    # Clear the loaded relationship, rather than only deleting its database
+    # rows.  Otherwise SQLAlchemy can retain the old KRA objects in
+    # ``t.kras`` during this request; validation then counts old + new weights
+    # (e.g. 100 + 100 = 200) and wrongly returns HTTP 400 on a second save.
+    t.kras.clear()
     db.flush()
     for kra_in in payload.kras:
-        kra = Kra(template_id=t.id, name=kra_in.name.strip(), weight=kra_in.weight)
-        db.add(kra)
+        kra = Kra(name=kra_in.name.strip(), weight=kra_in.weight)
+        t.kras.append(kra)
         db.flush()
         for item in kra_in.items:
             db.add(KpiItem(kra_id=kra.id, **item.model_dump()))
@@ -272,6 +300,7 @@ def import_template_csv(payload: TemplateImportIn, db: Session = Depends(get_db)
     weightage, the importer distributes provisional weights to exactly 100 and
     tags the parameters so HR knows to review them before publishing.
     """
+    _reject_duplicate_import(db, payload.name, payload.designation_id)
     reader = csv.DictReader(io.StringIO(payload.csv_text.strip()))
     rows = list(reader)
     if not rows:
@@ -354,6 +383,7 @@ async def import_template_excel(
     db: Session = Depends(get_db),
     user=Depends(require_tab_permission("templates", edit=True)),
 ):
+    _reject_duplicate_import(db, name, designation_id)
     saved = await save_upload(file, TEMPLATE_EXTENSIONS)
     rows = parse_template_rows(Path(saved["path"]))
     template = create_template_from_import_rows(
@@ -585,14 +615,6 @@ def _auto_assign_user_on_access(db: Session, user: User):
     ).unique().all()
 
     if not templates:
-        # Fallback: find any template if none is set to active
-        templates = db.scalars(
-            select(KpiTemplate)
-            .options(joinedload(KpiTemplate.division), joinedload(KpiTemplate.department), joinedload(KpiTemplate.designation), joinedload(KpiTemplate.kras).joinedload(Kra.items))
-            .order_by(KpiTemplate.id.desc())
-        ).unique().all()
-
-    if not templates:
         return
 
     for u in target_users:
@@ -659,7 +681,9 @@ def my_assignments(db: Session = Depends(get_db), user: User = Depends(get_curre
         stmt = stmt.where(KpiAssignment.user_id == user.id)
     elif user.role == Role.manager:
         stmt = stmt.join(User, KpiAssignment.user_id == User.id).where((User.manager_id == user.id) | (KpiAssignment.user_id == user.id))
-    rows = db.scalars(stmt).unique().all()
+    # Old assignments can reference a draft template. Hide them from KPI Input
+    # until the template is published, so employees never fill an unpublished form.
+    rows = [a for a in db.scalars(stmt).unique().all() if a.template.status == TemplateStatus.active]
 
     def progress(a):
         items = [i for kra in a.template.kras for i in kra.items]
@@ -706,6 +730,7 @@ def get_assignment(assignment_id: int, db: Session = Depends(get_db), user: User
         raise HTTPException(404, "Assignment not found")
     if not _can_view_assignment(user, a):
         raise HTTPException(403, "Forbidden")
+    _require_published_assignment_template(a)
     response_map = {r.kpi_item_id: r for r in a.responses}
     data = template_json(a.template)
     for k in data["kras"]:
@@ -743,6 +768,7 @@ async def import_assignment_responses(assignment_id: int, file: UploadFile, db: 
         raise HTTPException(404, "Assignment not found")
     if not _can_view_assignment(user, a):
         raise HTTPException(403, "Forbidden")
+    _require_published_assignment_template(a)
     saved = await save_upload(file)
     rows = parse_response_rows(Path(saved["path"]))
     if not rows:
@@ -826,6 +852,7 @@ def save_response(assignment_id: int, payload: list[ResponseIn], db: Session = D
         raise HTTPException(403, "Forbidden")
     if user.role == Role.manager and a.user_id != user.id:
         raise HTTPException(403, "Managers review KPI submissions; they cannot edit employee answers")
+    _require_published_assignment_template(a)
     if a.status in {AssignmentStatus.finalized, AssignmentStatus.submitted, AssignmentStatus.manager_reviewed}:
         if user.role not in {Role.superadmin, Role.hr}:
             raise HTTPException(409, "KPI entry has already been submitted and locked for this period. Employees are permitted only one submission per period. Contact HR or Super Admin to edit or reopen.")
@@ -858,6 +885,7 @@ def submit_assignment(assignment_id: int, db: Session = Depends(get_db), user: U
         raise HTTPException(403, "Forbidden")
     if user.role == Role.manager and a.user_id != user.id:
         raise HTTPException(403, "Managers cannot submit KPI on behalf of employees")
+    _require_published_assignment_template(a)
     if a.status in {AssignmentStatus.submitted, AssignmentStatus.manager_reviewed, AssignmentStatus.finalized}:
         raise HTTPException(409, "Assignment has already been submitted")
     items = [i for kra in a.template.kras for i in kra.items]
