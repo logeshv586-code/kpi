@@ -1,0 +1,22 @@
+# Optional: add inside the http { } block of /etc/nginx/nginx.conf
+# (only needed if uploads fail with 413 or proxy times out)
+#
+# http {
+#     client_max_body_size 10m;
+#     proxy_connect_timeout 60s;
+#     proxy_send_timeout 300s;
+#     proxy_read_timeout 300s;
+#     include /etc/nginx/conf.d/*.conf;
+# }
+#
+# Deploy steps (Linux):
+# 1. Copy frontend/dist/* → /usr/share/nginx/html/
+# 2. Copy frontend/nginx.conf → /etc/nginx/conf.d/kpi.conf
+# 3. Remove default site if it conflicts: sudo rm /etc/nginx/sites-enabled/default
+# 4. sudo nginx -t && sudo systemctl reload nginx
+# 5. Start backend: uvicorn app.main:app --host 0.0.0.0 --port 8000
+#
+# Verify on the SERVER (SSH):
+#   curl -s http://127.0.0.1:8000/api/health
+#   curl -s http://127.0.0.1/api/health
+# Both must return: {"status":"ok",...}

@@ -14,7 +14,10 @@ from openpyxl import load_workbook
 import pdfplumber
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-UPLOAD_DIR = Path(os.getenv("KPI_UPLOAD_DIR", str(BASE_DIR / "uploads"))).resolve()
+# Place uploads OUTSIDE the backend source tree so that uvicorn --reload
+# does not restart the server when a file is uploaded during development.
+_DATA_DIR = BASE_DIR.parent / "data"
+UPLOAD_DIR = Path(os.getenv("KPI_UPLOAD_DIR", str(_DATA_DIR / "uploads"))).resolve()
 SAMPLE_DIR = Path(os.getenv("KPI_SAMPLE_DIR", str(BASE_DIR / "samples"))).resolve()
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 SAMPLE_DIR.mkdir(parents=True, exist_ok=True)
@@ -108,15 +111,15 @@ def upload_metadata(file_id: str | None) -> dict[str, Any] | None:
 def clear_uploads() -> int:
     count = 0
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    for path in UPLOAD_DIR.iterdir():
+    for path in list(UPLOAD_DIR.iterdir()):
         try:
             if path.is_file() or path.is_symlink():
                 path.unlink()
                 count += 1
             elif path.is_dir():
-                shutil.rmtree(path)
+                shutil.rmtree(path, ignore_errors=True)
                 count += 1
-        except FileNotFoundError:
+        except (FileNotFoundError, PermissionError, OSError):
             pass
     return count
 
@@ -133,18 +136,21 @@ def _rows_from_csv(path: Path) -> list[dict[str, Any]]:
 
 def _rows_from_xlsx(path: Path) -> list[dict[str, Any]]:
     wb = load_workbook(path, read_only=True, data_only=True)
-    ws = wb.active
-    rows = ws.iter_rows(values_only=True)
     try:
-        headers = [str(x or "").strip() for x in next(rows)]
-    except StopIteration:
-        return []
-    result = []
-    for values in rows:
-        if not any(v not in (None, "") for v in values):
-            continue
-        result.append({headers[i] if i < len(headers) else f"Column {i+1}": values[i] for i in range(len(values))})
-    return result
+        ws = wb.active
+        rows = ws.iter_rows(values_only=True)
+        try:
+            headers = [str(x or "").strip() for x in next(rows)]
+        except StopIteration:
+            return []
+        result = []
+        for values in rows:
+            if not any(v not in (None, "") for v in values):
+                continue
+            result.append({headers[i] if i < len(headers) else f"Column {i+1}": values[i] for i in range(len(values))})
+        return result
+    finally:
+        wb.close()
 
 
 def _rows_from_xls(path: Path) -> list[dict[str, Any]]:

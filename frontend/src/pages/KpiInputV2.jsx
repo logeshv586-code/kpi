@@ -1,7 +1,7 @@
 import {useEffect, useMemo, useState} from 'react'
 import {CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Download, ExternalLink, Eye, FileUp, Info} from 'lucide-react'
 import {useSearchParams} from 'react-router-dom'
-import {api, apiFileUrl, getError} from '../lib/api'
+import {api, apiFileUrl, getError, apiPostForm} from '../lib/api'
 import {useAuth} from '../lib/auth'
 import FileUpload from '../components/FileUpload'
 import {Card, ErrorBox, Loader, Modal, PageHeader, Status, Tooltip} from '../components/UI'
@@ -350,9 +350,9 @@ export default function KpiInputV2(){
     setImportBusy(true);setError('')
     try {
       const fd = new FormData()
-      fd.append('file_id',fileMeta.file_id)
-      fd.append('assignment_id',id)
-      const {data} = await api.post('/files/parse-kpi-excel',fd,{headers:{'Content-Type':'multipart/form-data'}})
+      fd.append('file_id', fileMeta.file_id)
+      fd.append('assignment_id', id)
+      const {data} = await apiPostForm('/files/parse-kpi-excel', fd)
       setImportPreview(data)
     } catch (e) {
       setError(getError(e))

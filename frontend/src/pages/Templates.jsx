@@ -1,7 +1,7 @@
 import {useEffect, useMemo, useState} from 'react'
 import {Check, Download, Eye, FileUp, FolderTree, Pencil, Plus, Table, Trash2, Undo2} from 'lucide-react'
 import {Link, useNavigate} from 'react-router-dom'
-import {api, downloadApiFile, getError} from '../lib/api'
+import {api, downloadApiFile, getError, apiPostForm} from '../lib/api'
 import {canAccessTab, useAuth} from '../lib/auth'
 import {Card, ErrorBox, Loader, Modal, PageHeader, Status} from '../components/UI'
 
@@ -102,7 +102,7 @@ export default function Templates(){
         fd.append('file', importForm.file)
         fd.append('name', importForm.name)
         if (importForm.designation_id) fd.append('designation_id', importForm.designation_id)
-        ;({data} = await api.post('/kpi/templates/import-excel', fd, {headers: {'Content-Type': 'multipart/form-data'}}))
+        ;({data} = await apiPostForm('/kpi/templates/import-excel', fd))
       }
       setMessage(`Imported ${data.kras.length} KRA(s) as a draft template. Review before publishing.`)
       setShowImport(false)

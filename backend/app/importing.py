@@ -34,6 +34,7 @@ def parse_dropdown_results(value: Any) -> dict[str, float]:
     Accepted examples:
       Customer A=100; Customer B=80; Pending=40
       Completed:100 | Partial:50 | Not completed:0
+      Pass=100, Fail=0
     """
     text = str(value or "").strip()
     if not text:
@@ -42,21 +43,29 @@ def parse_dropdown_results(value: Any) -> dict[str, float]:
     result: dict[str, float] = {}
     seen: set[str] = set()
     parts = [part.strip() for part in re.split(r"[;|\n]+", text) if part.strip()]
+    if len(parts) == 1 and "," in parts[0] and ("=" in parts[0] or ":" in parts[0]):
+        parts = [p.strip() for p in parts[0].split(",") if p.strip()]
+
     for part in parts:
         match = re.match(r"^(.*?)\s*(?:=|:)\s*(-?\d+(?:\.\d+)?)\s*%?\s*$", part)
-        if not match:
-            raise HTTPException(400, f"Invalid Custom Dropdown Results value '{part}'. Use Result Name=Score; Result Name=Score")
-        label = match.group(1).strip()
-        score = float(match.group(2))
-        if not label:
-            raise HTTPException(400, "Every custom dropdown result needs a name")
-        if score < 0 or score > 100:
-            raise HTTPException(400, f"Custom dropdown score for '{label}' must be between 0 and 100")
-        key = normalize_name(label)
-        if key in seen:
-            raise HTTPException(400, f"Duplicate custom dropdown result '{label}'")
-        seen.add(key)
-        result[label] = score
+        if match:
+            label = match.group(1).strip()
+            score = float(match.group(2))
+            if not label:
+                continue
+            score = max(0.0, min(100.0, score))
+            key = normalize_name(label)
+            if key not in seen:
+                seen.add(key)
+                result[label] = score
+        else:
+            label = part.strip()
+            if label:
+                key = normalize_name(label)
+                if key not in seen:
+                    seen.add(key)
+                    result[label] = 100.0 if not result else 0.0
+
     return result
 
 

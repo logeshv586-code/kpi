@@ -3,15 +3,17 @@
 Run from the project root:
     DATABASE_URL=sqlite:////tmp/kpi_v12_test.db PYTHONPATH=backend python backend/tests/run_enhancement_tests.py
 """
+
 from __future__ import annotations
 
 import os
+import tempfile
 from io import BytesIO
 from pathlib import Path
 
-TEST_DB = Path("/tmp/kpi_v12_test.db")
+TEST_DB = Path(tempfile.gettempdir()) / "kpi_v12_test.db"
 TEST_DB.unlink(missing_ok=True)
-os.environ.setdefault("DATABASE_URL", f"sqlite:///{TEST_DB}")
+os.environ["DATABASE_URL"] = f"sqlite:///{TEST_DB.as_posix()}"
 os.environ.setdefault("SECRET_KEY", "test-secret-test-secret-test-secret-123")
 os.environ.setdefault("FRONTEND_URL", "http://localhost:5173")
 

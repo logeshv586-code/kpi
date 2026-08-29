@@ -1,7 +1,7 @@
 import {useEffect, useMemo, useState} from 'react'
 import {Link} from 'react-router-dom'
 import {ArrowDown, ArrowUp, ArrowUpDown, FileUp, KeyRound, Pencil, ShieldAlert, Trash2, UserPlus} from 'lucide-react'
-import {api, getError} from '../lib/api'
+import {api, getError, apiPostForm} from '../lib/api'
 import {useAuth} from '../lib/auth'
 import {Card, ErrorBox, Loader, Modal, PageHeader, Status} from '../components/UI'
 
@@ -177,7 +177,7 @@ export default function Employees(){
     setBusy(true)
     try{
       const fd=new FormData();fd.append('file',importFile);fd.append('preview','false')
-      const {data}=await api.post('/admin/import-employees-excel',fd,{headers:{'Content-Type':'multipart/form-data'}})
+      const {data}=await apiPostForm('/admin/import-employees-excel',fd)
       setMessage(`Imported ${data.created} employee(s); ${data.skipped} existing row(s) skipped.`);setImportOpen(false);setImportFile(null);loadUsers()
     }catch(e){setError(getError(e))}finally{setBusy(false)}
   }

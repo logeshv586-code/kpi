@@ -11,7 +11,21 @@ from sqlalchemy.orm import Session
 
 from .database import SessionLocal
 from .file_storage import clear_uploads
-from .models import AuditLog, Department, Designation, Division, KpiAssignment, KpiCycle, KpiResponse, KpiReview, KpiTemplate, Role, User
+from .models import (
+    AuditLog,
+    Department,
+    Designation,
+    Division,
+    KpiAssignment,
+    KpiCycle,
+    KpiItem,
+    KpiResponse,
+    KpiReview,
+    KpiTemplate,
+    Kra,
+    Role,
+    User,
+)
 
 
 def reset_transactional_data(db: Session, clear_files: bool = True) -> dict:
@@ -34,22 +48,47 @@ def reset_transactional_data(db: Session, clear_files: bool = True) -> dict:
 def reset_full_system_data(db: Session, current_user_id: int | None = None, clear_files: bool = True) -> dict:
     tx_counts = reset_transactional_data(db, clear_files=clear_files)
 
-    templates = db.query(KpiTemplate).count()
+    # 1. Clear foreign key links on all users
+    db.query(User).update({
+        User.manager_id: None,
+        User.designation_id: None,
+        User.kpi_template_id: None,
+    })
+    db.flush()
+
+    # 2. Delete KPI items, KRAs, and KPI Templates explicitly
+    items_count = db.query(KpiItem).count()
+    kras_count = db.query(Kra).count()
+    templates_count = db.query(KpiTemplate).count()
+    db.execute(delete(KpiItem))
+    db.execute(delete(Kra))
     db.execute(delete(KpiTemplate))
+    db.flush()
 
-    db.query(User).update({User.manager_id: None, User.designation_id: None})
-    db.commit()
-
+    # 3. Preserve the single active superadmin user
+    preserved_user = None
     if current_user_id:
-        users = db.query(User).filter(User.id != current_user_id, User.role != Role.superadmin).count()
-        db.execute(delete(User).where(User.id != current_user_id, User.role != Role.superadmin))
-    else:
-        users = db.query(User).filter(User.email != "superadmin@kpi.com").count()
-        db.execute(delete(User).where(User.email != "superadmin@kpi.com"))
+        preserved_user = db.query(User).filter(User.id == current_user_id).first()
+    if not preserved_user:
+        preserved_user = db.query(User).filter(User.role == Role.superadmin).order_by(User.id.asc()).first()
+    if not preserved_user:
+        preserved_user = db.query(User).order_by(User.id.asc()).first()
 
-    designations = db.query(Designation).count()
-    departments = db.query(Department).count()
-    divisions = db.query(Division).count()
+    preserved_id = preserved_user.id if preserved_user else None
+
+    # Delete all other users
+    if preserved_id is not None:
+        users_count = db.query(User).filter(User.id != preserved_id).count()
+        db.execute(delete(User).where(User.id != preserved_id))
+    else:
+        users_count = db.query(User).count()
+        db.execute(delete(User))
+    db.flush()
+
+    # 4. Delete designations, departments, divisions
+    designations_count = db.query(Designation).count()
+    departments_count = db.query(Department).count()
+    divisions_count = db.query(Division).count()
 
     db.execute(delete(Designation))
     db.execute(delete(Department))
@@ -59,23 +98,29 @@ def reset_full_system_data(db: Session, current_user_id: int | None = None, clea
 
     return {
         **tx_counts,
-        "templates": templates,
-        "users": users,
-        "designations": designations,
-        "departments": departments,
-        "divisions": divisions,
+        "items": items_count,
+        "kras": kras_count,
+        "templates": templates_count,
+        "users": users_count,
+        "designations": designations_count,
+        "departments": departments_count,
+        "divisions": divisions_count,
     }
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--confirm", required=True)
+    parser = argparse.ArgumentParser(description="Reset KPI System database data")
+    parser.add_argument("--confirm", required=True, help="Must be RESET to confirm")
+    parser.add_argument("--mode", choices=["full", "transactional"], default="full", help="Reset mode (default: full)")
     args = parser.parse_args()
     if args.confirm != "RESET":
         raise SystemExit("Confirmation must be exactly RESET")
     db = SessionLocal()
     try:
-        result = reset_transactional_data(db)
+        if args.mode == "full":
+            result = reset_full_system_data(db)
+        else:
+            result = reset_transactional_data(db)
         print("Reset complete:", result)
     finally:
         db.close()

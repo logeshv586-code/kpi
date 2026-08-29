@@ -529,10 +529,11 @@ def _normalize_role(value: object) -> Role | None:
 @router.post("/import-employees-excel")
 async def import_employees_excel(
     file: UploadFile,
-    preview: bool = Form(True),
+    preview: str = Form("true"),
     db: Session = Depends(get_db),
     actor=Depends(admin_roles),
 ):
+    is_preview = preview.lower() not in ("false", "0", "no", "off")
     saved = await save_upload(file, TEMPLATE_EXTENSIONS)
     rows = read_table(__import__("pathlib").Path(saved["path"]))
     if not rows:
@@ -587,13 +588,13 @@ async def import_employees_excel(
             "errors": errors,
         })
 
-    if preview:
+    if is_preview:
         return {
             "preview": True,
             "file": {k: saved[k] for k in ("file_id", "filename", "url", "size")},
             "total_rows": len(prepared),
             "valid_rows": sum(1 for r in prepared if r["status"] in {"ready", "existing"}),
-            "created": 0,
+            "created": sum(1 for r in prepared if r["status"] == "ready"),
             "skipped": sum(1 for r in prepared if r["status"] == "existing"),
             "rows": [{k: v for k, v in r.items() if k != "password"} for r in prepared],
         }
@@ -647,7 +648,7 @@ def reset_all_data(payload: ResetIn, db: Session = Depends(get_db), actor=Depend
         raise HTTPException(400, "Type RESET exactly to confirm the data reset")
     if payload.mode == "full":
         counts = reset_full_system_data(db, current_user_id=actor.id, clear_files=True)
-        message = "Full system data reset complete. All users, templates, organization departments, and KPI history were cleared. Your superadmin account is ready for fresh testing."
+        message = "Full system factory reset complete. All employees, departments, designations, templates, and KPI history were cleared. Your superadmin account is ready for fresh testing."
     else:
         counts = reset_transactional_data(db, clear_files=True)
         message = "Transactional KPI data was reset. Organization, users, templates, masters and scoring settings were preserved."

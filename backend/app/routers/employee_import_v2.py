@@ -4,15 +4,18 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
 from ..auth import hash_password, require_roles
 from ..database import get_db
 from ..file_storage import TEMPLATE_EXTENSIONS, read_table, save_upload
-from ..models import Department, Role, User
+from ..models import Department, Designation, Division, Role, User
 from ..services import audit
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
+# Same handler on a non-/admin/ path — some proxies/firewalls block /api/admin/* uploads.
+employees_import_router = APIRouter(prefix="/api/employees", tags=["employees"])
 admin_roles = require_roles(Role.superadmin, Role.hr)
 
 
@@ -38,39 +41,79 @@ def _normalize_role(value: object) -> Role | None:
 
 
 @router.post("/import-employees-excel-v2")
+@employees_import_router.post("/import-excel-v2")
 async def import_employees_excel_v2(
     file: UploadFile,
-    preview: bool = Form(True),
+    preview: str = Form("true"),
     db: Session = Depends(get_db),
     actor=Depends(admin_roles),
 ):
     """Import employees using the same labels shown in the current Add Employee UI."""
+    try:
+        return await _import_employees_excel_v2(file, preview, db, actor)
+    except HTTPException:
+        db.rollback()
+        raise
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(409, "Duplicate email or employee number already exists in the database") from exc
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(500, f"Employee import failed: {exc}") from exc
+
+
+async def _import_employees_excel_v2(
+    file: UploadFile,
+    preview: str,
+    db: Session,
+    actor: User,
+):
+    is_preview = preview.lower() not in ("false", "0", "no", "off")
     saved = await save_upload(file, TEMPLATE_EXTENSIONS)
     rows = read_table(Path(saved["path"]))
     if not rows:
         raise HTTPException(400, "The workbook contains no employee rows")
 
     departments = db.scalars(select(Department).options(joinedload(Department.designations))).unique().all()
+    general_division = db.scalar(select(Division).where(Division.name == "General"))
+    if not general_division:
+        general_division = Division(name="General")
+        db.add(general_division)
+        db.flush()
     users = db.scalars(select(User)).all()
-    existing_by_email = {u.email.lower(): u for u in users}
-    existing_employee_nos = {str(u.employee_no).strip().lower() for u in users if u.employee_no}
+    existing_by_email = {u.email.strip().lower(): u for u in users if u.email}
+    existing_by_employee_no = {
+        str(u.employee_no).strip().lower(): u for u in users if u.employee_no
+    }
 
     imported_emails = {
-        str(_row_get(r, "Email") or "").strip().lower()
+        str(_row_get(r, "Email", "Email ID") or "").strip().lower()
         for r in rows
-        if _row_get(r, "Email")
+        if _row_get(r, "Email", "Email ID")
     }
     workbook_employee_nos: set[str] = set()
     prepared = []
 
     for index, row in enumerate(rows, 2):
-        employee_no = str(_row_get(
+        raw_emp_no = _row_get(
             row,
             "Employee No / Unique ID",
             "Employee No",
             "Employee ID",
             "Unique ID",
-        ) or "").strip()
+            "Emp No",
+            "Emp ID",
+        )
+        if raw_emp_no is not None:
+            if isinstance(raw_emp_no, float) and raw_emp_no.is_integer():
+                employee_no = str(int(raw_emp_no)).strip()
+            else:
+                employee_no = str(raw_emp_no).strip()
+                if employee_no.endswith(".0") and employee_no[:-2].isdigit():
+                    employee_no = employee_no[:-2]
+        else:
+            employee_no = ""
+
         name = str(_row_get(row, "Full Name", "Name", "Employee Name") or "").strip()
         email = str(_row_get(row, "Email", "Email ID") or "").strip().lower()
         department_name = str(_row_get(row, "Department") or "").strip()
@@ -100,8 +143,9 @@ async def import_employees_excel_v2(
 
         employee_no_key = employee_no.lower()
         if employee_no_key:
-            if employee_no_key in existing_employee_nos:
-                errors.append(f"Employee No / Unique ID '{employee_no}' already exists")
+            existing_employee = existing_by_employee_no.get(employee_no_key)
+            if existing_employee and existing_employee.email.strip().lower() != email:
+                errors.append(f"Employee No / Unique ID '{employee_no}' already belongs to {existing_employee.email}")
             elif employee_no_key in workbook_employee_nos:
                 errors.append(f"Employee No / Unique ID '{employee_no}' is duplicated in this file")
             workbook_employee_nos.add(employee_no_key)
@@ -110,7 +154,11 @@ async def import_employees_excel_v2(
             d for d in departments if d.name.strip().lower() == department_name.lower()
         ] if department_name else []
         if department_name and not matching_departments:
-            errors.append(f"Department '{department_name}' was not found")
+            department = Department(name=department_name, division_id=general_division.id)
+            db.add(department)
+            db.flush()
+            departments.append(department)
+            matching_departments = [department]
 
         designation = None
         if designation_name:
@@ -122,8 +170,16 @@ async def import_employees_excel_v2(
                 ])
             if len(candidates) == 1:
                 designation = candidates[0]
+            elif not candidates and len(matching_departments) == 1:
+                designation = Designation(
+                    name=designation_name,
+                    department_id=matching_departments[0].id,
+                )
+                db.add(designation)
+                db.flush()
+                matching_departments[0].designations.append(designation)
             elif not candidates:
-                errors.append(f"Designation / Role '{designation_name}' was not found")
+                errors.append(f"Designation / Role '{designation_name}' is ambiguous; include Department")
             else:
                 errors.append(f"Designation / Role '{designation_name}' is ambiguous; include Department")
         elif department_name:
@@ -148,13 +204,13 @@ async def import_employees_excel_v2(
             "errors": errors,
         })
 
-    if preview:
+    if is_preview:
         return {
             "preview": True,
             "file": {k: saved[k] for k in ("file_id", "filename", "url", "size")},
             "total_rows": len(prepared),
             "valid_rows": sum(1 for r in prepared if r["status"] in {"ready", "existing"}),
-            "created": 0,
+            "created": sum(1 for r in prepared if r["status"] == "ready"),
             "skipped": sum(1 for r in prepared if r["status"] == "existing"),
             "rows": [{k: v for k, v in r.items() if k != "password"} for r in prepared],
         }
@@ -168,6 +224,11 @@ async def import_employees_excel_v2(
     for row in prepared:
         if row["email"] in existing_by_email:
             skipped += 1
+            existing_user = existing_by_email[row["email"]]
+            if not existing_user.employee_no and row["employee_no"]:
+                existing_user.employee_no = row["employee_no"]
+            if not existing_user.designation_id and row["designation_id"]:
+                existing_user.designation_id = row["designation_id"]
             continue
         user = User(
             employee_no=row["employee_no"] or None,
@@ -184,6 +245,7 @@ async def import_employees_excel_v2(
             user.employee_no = f"EMP-{user.id:04d}"
             db.flush()
         created_users[user.email] = user
+        existing_by_employee_no[user.employee_no.lower()] = user
         audit(db, actor.id, "import_employee", "user", user.id, {
             "email": user.email,
             "employee_no": user.employee_no,
@@ -191,7 +253,7 @@ async def import_employees_excel_v2(
 
     all_by_email = {**existing_by_email, **created_users}
     for row in prepared:
-        user = created_users.get(row["email"])
+        user = all_by_email.get(row["email"])
         if not user or not row["manager_email"]:
             continue
         manager = all_by_email.get(row["manager_email"])

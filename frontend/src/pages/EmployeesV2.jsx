@@ -1,7 +1,7 @@
 import {useEffect, useMemo, useState} from 'react'
 import {ArrowDown, ArrowUp, ArrowUpDown, Download, FileUp, KeyRound, Pencil, ShieldAlert, Trash2, UserPlus} from 'lucide-react'
 import {Link, useNavigate} from 'react-router-dom'
-import {api, downloadApiFile, getError} from '../lib/api'
+import {api, downloadApiFile, getError, apiPostForm} from '../lib/api'
 import {canAccessTab, useAuth} from '../lib/auth'
 import {Card, ErrorBox, Loader, Modal, PageHeader, Status} from '../components/UI'
 
@@ -483,7 +483,7 @@ export default function EmployeesV2() {
       fd.append('preview', 'false')
       // Do not set Content-Type manually: Axios adds the required multipart
       // boundary in the browser, while the shared API client adds the bearer token.
-      const {data} = await api.post('/admin/import-employees-excel-v2', fd)
+      const {data} = await apiPostForm('/employees/import-excel-v2', fd)
       setMessage(`Imported ${data.created} employee(s); ${data.skipped} skipped.`)
       setImportOpen(false)
       setImportFile(null)

@@ -1,6 +1,6 @@
 import {useRef,useState} from 'react'
 import {FileSpreadsheet,UploadCloud,X} from 'lucide-react'
-import {api,getError,apiFileUrl} from '../lib/api'
+import {api,getError,apiFileUrl,apiPostForm} from '../lib/api'
 
 export default function FileUpload({label='Upload file',help='PDF, Excel or CSV up to 10 MB',onUploaded,value,disabled=false,compact=false,accept='.pdf,.xlsx,.xls,.csv'}){
   const inputRef=useRef(null)
@@ -10,7 +10,7 @@ export default function FileUpload({label='Upload file',help='PDF, Excel or CSV 
     setError('');setUploading(true);setProgress(1)
     const fd=new FormData();fd.append('file',file)
     try{
-      const {data}=await api.post('/files/upload',fd,{headers:{'Content-Type':'multipart/form-data'},onUploadProgress:e=>{if(e.total)setProgress(Math.round(e.loaded/e.total*100))}})
+      const {data}=await apiPostForm('/files/upload',fd,{onUploadProgress:e=>{if(e.total)setProgress(Math.round(e.loaded/e.total*100))}})
       setProgress(100);onUploaded?.(data)
     }catch(e){setError(getError(e));setProgress(0)}finally{setUploading(false)}
   }
