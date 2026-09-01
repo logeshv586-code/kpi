@@ -1,5 +1,5 @@
 import {NavLink, useNavigate} from 'react-router-dom'
-import {BarChart3, FileInput, FileSpreadsheet, HelpCircle, KeyRound, LogOut, Settings as SettingsIcon, Users} from 'lucide-react'
+import {BarChart3, FileInput, FileSpreadsheet, HelpCircle, KeyRound, LogOut, Settings as SettingsIcon, Users, Menu, X} from 'lucide-react'
 import {canAccessTab, useAuth} from '../lib/auth'
 import {useState} from 'react'
 import {api, getError} from '../lib/api'
@@ -21,6 +21,7 @@ export default function Layout({children}) {
   const [passwordError, setPasswordError] = useState('')
   const [passwordMessage, setPasswordMessage] = useState('')
   const [passwordFieldErrors, setPasswordFieldErrors] = useState({})
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
 
   function help() {
     localStorage.removeItem('kpi_guide_dismissed')
@@ -50,7 +51,8 @@ export default function Layout({children}) {
 
   return (
     <div className="app-shell">
-      <aside className="sidebar">
+      {mobileMenuOpen && <div className="mobile-overlay" onClick={() => setMobileMenuOpen(false)} />}
+      <aside className={`sidebar ${mobileMenuOpen ? 'open' : ''}`}>
         <div className="brand">
           <div className="brand-mark">K</div>
           <div>
@@ -61,7 +63,7 @@ export default function Layout({children}) {
         <div className="nav-section">
           <div className="nav-label">Workspace</div>
           {navigation.map(([to, Icon, label]) => (
-            <NavLink key={to} to={to} className={({isActive}) => `nav-item ${isActive ? 'active' : ''}`}>
+            <NavLink key={to} to={to} className={({isActive}) => `nav-item ${isActive ? 'active' : ''}`} onClick={() => setMobileMenuOpen(false)}>
               <Icon size={18}/>
               <span>{label}</span>
             </NavLink>
@@ -91,7 +93,12 @@ export default function Layout({children}) {
       </aside>
       <main className="main">
         <header className="topbar">
-          <div className="crumb">Monthly KPI Performance Management</div>
+          <div className="topbar-left">
+            <button className="hamburger" onClick={() => setMobileMenuOpen(!mobileMenuOpen)}>
+              <Menu size={20}/>
+            </button>
+            <div className="crumb">Monthly KPI Performance Management</div>
+          </div>
           <div className="top-context">
             <span>{user?.department || 'Organization'}</span>
             <div className="avatar small">{user?.name?.slice(0, 1)}</div>
