@@ -272,10 +272,6 @@ function ReviewerWorkspace({initialList,onListChange}){
       </div>
     </Card>)}
 
-    {isSuperAdmin&&assignment.review_history?.length?<Card>
-      <h3 style={{marginTop:0}}>Review History</h3>
-      <div className="table-wrap"><table><thead><tr><th>Reviewer</th><th>Stage</th><th>Decision</th><th>Comments</th><th>Date</th></tr></thead><tbody>{assignment.review_history.map(review=><tr key={review.id}><td><strong>{review.reviewer||'System'}</strong></td><td>{String(review.stage||'').replaceAll('_',' ')}</td><td><Status value={review.decision}/></td><td>{review.comments||'—'}</td><td>{review.created_at?new Date(review.created_at).toLocaleString():'—'}</td></tr>)}</tbody></table></div>
-    </Card>:null}
 
     <div className="footer-actions sticky-actions" style={{display:'flex',justifyContent:'space-between',gap:'10px'}}>
       <button className="secondary" disabled={busy||!canEdit||assignment.status==='finalized'} onClick={returnToEmployee}><RotateCcw size={16}/>Return to Employee</button>
