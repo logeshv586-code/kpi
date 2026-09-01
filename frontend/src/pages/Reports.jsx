@@ -40,6 +40,7 @@ export default function Reports(){
   const hasAvailableMonths=availableMonths.length>0
   const departments=useMemo(()=>['All',...new Set((data?.rows||[]).map(r=>r.department).filter(Boolean))].sort((a,b)=>a==='All'?-1:b==='All'?1:a.localeCompare(b)),[data])
 
+
   useEffect(()=>{
     if(!availableMonths.length)return
     setFromMonth(current=>current&&availableMonths.includes(current)?current:availableMonths[0])
@@ -60,7 +61,11 @@ export default function Reports(){
       .map(r=>{
         const values=selectedMonths.map(m=>r.scores?.[m]).filter(v=>v!==null&&v!==undefined&&v!=='').map(Number).filter(Number.isFinite)
         const score=values.length?roundOne(values.reduce((s,v)=>s+v,0)/values.length):null
-        return{...r,display_score:score,display_band:score!=null?getRatingBand(score):'Not Evaluated'}
+        const empValues=selectedMonths.map(m=>r.employee_scores?.[m]).filter(v=>v!==null&&v!==undefined&&v!=='').map(Number).filter(Number.isFinite)
+        const empScore=empValues.length?roundOne(empValues.reduce((s,v)=>s+v,0)/empValues.length):null
+        const mgrValues=selectedMonths.map(m=>r.manager_scores?.[m]).filter(v=>v!==null&&v!==undefined&&v!=='').map(Number).filter(Number.isFinite)
+        const mgrScore=mgrValues.length?roundOne(mgrValues.reduce((s,v)=>s+v,0)/mgrValues.length):null
+        return{...r,display_score:score,display_emp_score:empScore,display_mgr_score:mgrScore,display_band:score!=null?getRatingBand(score):'Not Evaluated'}
       })
   },[data,department,selectedMonths])
 
@@ -91,8 +96,17 @@ export default function Reports(){
 
   function exportCsv(){
     if(!rows.length)return
-    const head=['Employee','Email','From Month','To Month','Department','Designation','Score','Rating Band']
-    const lines=[head.join(','),...rows.map(r=>[r.employee,r.email||'',fromMonth,toMonth,r.department||'',r.designation||'',r.display_score??'N/A',r.display_band].map(x=>`"${String(x).replaceAll('"','""')}"`).join(','))]
+    const isSuperAdmin = user?.role === 'superadmin';
+    const head = isSuperAdmin 
+      ? ['Employee','Email','From Month','To Month','Department','Designation','Manager Score','Rating Band']
+      : ['Employee','Email','From Month','To Month','Department','Designation','Employee Score','Manager Score','Final Score','Rating Band']
+    const lines=[head.join(','),...rows.map(r=>{
+      const base = [r.employee,r.email||'',fromMonth,toMonth,r.department||'',r.designation||'']
+      const scores = isSuperAdmin 
+        ? [r.display_mgr_score??'N/A',r.display_band]
+        : [r.display_emp_score??'N/A',r.display_mgr_score??'N/A',r.display_score??'N/A',r.display_band]
+      return [...base, ...scores].map(x=>`"${String(x).replaceAll('"','""')}"`).join(',')
+    })]
     const blob=new Blob([lines.join('\n')],{type:'text/csv'}),url=URL.createObjectURL(blob),a=document.createElement('a')
     a.href=url;a.download=`kpi-report-${fromMonth}-to-${toMonth}`.toLowerCase().replace(/\s+/g,'-')+'.csv';a.click();URL.revokeObjectURL(url)
   }
@@ -109,7 +123,7 @@ export default function Reports(){
         <Card><div style={{display:'flex',alignItems:'center',gap:'8px',color:'#64748b'}}><Users size={16}/><span>Evaluated Records</span></div><strong className="small-metric">{metrics.total}</strong></Card>
         <Card><div style={{display:'flex',alignItems:'center',gap:'8px',color:'#64748b'}}><TrendingUp size={16}/><span>Top Department</span></div><strong className="small-metric" style={{fontSize:'1rem'}}>{metrics.topDepartment}</strong></Card>
       </div>
-      <Card><div style={{fontSize:'0.9rem',fontWeight:700,color:'#1e293b',marginBottom:'14px'}}>Performance Matrix: <span style={{color:'#2563eb'}}>{rangeLabel}</span></div><div className="table-wrap"><table><thead><tr><th>Employee</th><th>Department</th><th>Designation</th><th>Report Period</th><th>Score</th><th>Rating Band</th></tr></thead><tbody>{rows.map(r=><tr key={r.user_id}><td><strong>{r.employee}</strong><div className="cell-help">{r.email}</div></td><td>{r.department||'—'}</td><td>{r.designation||'—'}</td><td>{rangeLabel}</td><td>{r.display_score!=null?<Score value={r.display_score}/>:<span className="muted">N/A</span>}</td><td><span className={`status-badge ${bandClass(r.display_band)}`}>{r.display_band}</span></td></tr>)}</tbody></table></div>{!rows.length?<div className="empty">No performance data found for this department and period.</div>:null}</Card>
+      <Card><div style={{fontSize:'0.9rem',fontWeight:700,color:'#1e293b',marginBottom:'14px'}}>Performance Matrix: <span style={{color:'#2563eb'}}>{rangeLabel}</span></div><div className="table-wrap"><table><thead><tr><th>Employee</th><th>Department</th><th>Designation</th><th>Report Period</th>{user?.role!=='superadmin'&&<th>Employee Score</th>}<th>Manager Score</th>{user?.role!=='superadmin'&&<th>Final Score</th>}<th>Rating Band</th></tr></thead><tbody>{rows.map(r=><tr key={r.user_id}><td><strong>{r.employee}</strong><div className="cell-help">{r.email}</div></td><td>{r.department||'—'}</td><td>{r.designation||'—'}</td><td>{rangeLabel}</td>{user?.role!=='superadmin'&&<td>{r.display_emp_score!=null?<Score value={r.display_emp_score}/>:<span className="muted">N/A</span>}</td>}<td>{r.display_mgr_score!=null?<Score value={r.display_mgr_score}/>:<span className="muted">N/A</span>}</td>{user?.role!=='superadmin'&&<td>{r.display_score!=null?<Score value={r.display_score}/>:<span className="muted">N/A</span>}</td>}<td><span className={`status-badge ${bandClass(r.display_band)}`}>{r.display_band}</span></td></tr>)}</tbody></table></div>{!rows.length?<div className="empty">No performance data found for this department and period.</div>:null}</Card>
     </>}
 
     {showRangeModal?<Modal title="Select report period" onClose={()=>setShowRangeModal(false)} actions={<><button className="secondary" onClick={()=>setShowRangeModal(false)}>Cancel</button><button className="primary" onClick={applyRange}>Apply From / To</button></>}>

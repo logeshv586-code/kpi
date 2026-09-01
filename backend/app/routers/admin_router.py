@@ -416,6 +416,14 @@ def delete_user(user_id: int, db: Session = Depends(get_db), actor=Depends(requi
     if user.role == Role.superadmin and user.email == "superadmin@kpi.com":
         raise HTTPException(400, "Primary system superadmin account cannot be deleted")
 
+    from ..models import AuditLog, KpiReview
+    from sqlalchemy import update
+    
+    if db.scalar(select(KpiReview.id).where(KpiReview.reviewer_id == user_id)):
+        raise HTTPException(409, "Cannot delete employee because they have conducted KPI reviews.")
+
+    db.execute(update(AuditLog).where(AuditLog.actor_id == user_id).values(actor_id=None))
+
     assignments = db.scalars(select(KpiAssignment).where(KpiAssignment.user_id == user_id)).all()
     for a in assignments:
         db.delete(a)

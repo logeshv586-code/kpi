@@ -134,6 +134,8 @@ def _rating_band_label(score: float) -> str:
 def monthly_matrix(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     rows = _visible_assignments(db, user)
     matrix = defaultdict(dict)
+    emp_matrix = defaultdict(dict)
+    mgr_matrix = defaultdict(dict)
     info = {}
     month_dates = {}
     user_scores = defaultdict(list)
@@ -157,6 +159,8 @@ def monthly_matrix(db: Session = Depends(get_db), user: User = Depends(get_curre
         }
         score = _official_score(assignment)
         matrix[employee.id][label] = score
+        emp_matrix[employee.id][label] = assignment.calculated_score
+        mgr_matrix[employee.id][label] = assignment.manager_score
         if score is not None:
             user_scores[employee.id].append(score)
 
@@ -179,6 +183,8 @@ def monthly_matrix(db: Session = Depends(get_db), user: User = Depends(get_curre
             "latest_score": round(latest_sc, 1),
             "rating_band": _rating_band_label(overall_avg),
             "scores": matrix[uid],
+            "employee_scores": emp_matrix[uid],
+            "manager_scores": mgr_matrix[uid],
         })
 
     return {
