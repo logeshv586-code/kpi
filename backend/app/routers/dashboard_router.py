@@ -4,11 +4,24 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, joinedload
 
-from ..auth import get_current_user, require_roles
+from ..auth import get_current_user
 from ..database import get_db
-from ..models import AssignmentStatus, CycleStatus, Department, Designation, KpiAssignment, KpiCycle, KpiTemplate, Kra, Role, SystemSetting, User
+from ..models import AssignmentStatus, CycleStatus, Department, Designation, KpiAssignment, KpiCycle, Kra, Role, SystemSetting, User
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
+
+
+def _is_admin_or_hr(user: User) -> bool:
+    return user.role in {Role.superadmin, Role.hr}
+
+
+def _official_score(assignment: KpiAssignment) -> float | None:
+    """Only completed Manager Score review contributes to official reporting."""
+    if assignment.final_score is not None:
+        return float(assignment.final_score)
+    if assignment.status == AssignmentStatus.manager_reviewed and assignment.manager_score is not None:
+        return float(assignment.manager_score)
+    return None
 
 
 def _visible_assignments(db: Session, user: User):
@@ -19,14 +32,15 @@ def _visible_assignments(db: Session, user: User):
             .joinedload(User.designation)
             .joinedload(Designation.department)
             .joinedload(Department.division),
+            joinedload(KpiAssignment.user).joinedload(User.manager),
             joinedload(KpiAssignment.cycle),
         )
     ).all()
-    if user.role == Role.superadmin:
+    if _is_admin_or_hr(user):
         return rows
-    if user.role == Role.manager:
-        return [a for a in rows if a.user_id == user.id or a.user.manager_id == user.id]
-    return [a for a in rows if a.user_id == user.id]
+    # Reports To is authoritative. Any person can review direct reports even
+    # when their stored System Role is Employee.
+    return [a for a in rows if a.user_id == user.id or a.user.manager_id == user.id]
 
 
 @router.get("/summary")
@@ -36,42 +50,46 @@ def summary(db: Session = Depends(get_db), user: User = Depends(get_current_user
     assignments = _visible_assignments(db, user)
     current_cycle = running_cycles[0] if running_cycles else db.scalar(select(KpiCycle).order_by(KpiCycle.month.desc()).limit(1))
     current_assignments = [a for a in assignments if current_cycle and a.cycle_id == current_cycle.id]
-    if user.role == Role.superadmin:
+
+    if _is_admin_or_hr(user):
         total_employees = db.scalar(select(func.count(User.id)).where(User.active.is_(True))) or 0
     else:
         visible_people = {a.user_id for a in current_assignments or assignments}
         visible_people.add(user.id)
         total_employees = len(visible_people)
+
     submitted = [a for a in current_assignments if a.status in {AssignmentStatus.submitted, AssignmentStatus.manager_reviewed, AssignmentStatus.finalized}]
-    if user.role == Role.employee:
-        pending_fill = sum(1 for a in current_assignments if a.user_id == user.id and a.status in {AssignmentStatus.not_started, AssignmentStatus.draft})
-        pending_review = 0
-        pending_finalize = 0
-    elif user.role == Role.manager:
-        pending_fill = sum(1 for a in current_assignments if a.user_id == user.id and a.status in {AssignmentStatus.not_started, AssignmentStatus.draft})
-        pending_review = sum(1 for a in current_assignments if a.user.manager_id == user.id and a.status == AssignmentStatus.submitted)
-        pending_finalize = 0
-    else:
+    direct_reports = [a for a in current_assignments if a.user and a.user.manager_id == user.id and a.user_id != user.id]
+    has_direct_reports = bool(direct_reports) or db.scalar(select(User.id).where(User.manager_id == user.id, User.active.is_(True)).limit(1)) is not None
+
+    if _is_admin_or_hr(user):
         pending_fill = sum(1 for a in current_assignments if a.status in {AssignmentStatus.not_started, AssignmentStatus.draft})
         pending_review = sum(1 for a in current_assignments if a.status == AssignmentStatus.submitted)
-        pending_finalize = sum(1 for a in current_assignments if a.status == AssignmentStatus.manager_reviewed or (a.status == AssignmentStatus.submitted and not a.user.manager_id))
-    score_rows = [a.final_score if a.final_score is not None else a.calculated_score for a in current_assignments if (a.final_score is not None or a.calculated_score > 0)]
+        pending_finalize = sum(1 for a in current_assignments if a.status == AssignmentStatus.manager_reviewed)
+    else:
+        pending_fill = sum(1 for a in current_assignments if a.user_id == user.id and a.status in {AssignmentStatus.not_started, AssignmentStatus.draft})
+        pending_review = sum(1 for a in direct_reports if a.status == AssignmentStatus.submitted) if has_direct_reports else 0
+        pending_finalize = 0
+
+    score_rows = [score for a in current_assignments if (score := _official_score(a)) is not None]
     division_scores = defaultdict(list)
-    for a in current_assignments:
-        if a.user.designation:
-            div = a.user.designation.department.division.name
-            score = a.final_score if a.final_score is not None else a.calculated_score
-            if score > 0:
-                division_scores[div].append(score)
+    for assignment in current_assignments:
+        if assignment.user.designation:
+            division = assignment.user.designation.department.division.name
+            score = _official_score(assignment)
+            if score is not None:
+                division_scores[division].append(score)
+
     return {
         "total_employees": total_employees,
         "running_cycles": running,
         "current_cycle": current_cycle.name if current_cycle else None,
         "submission_rate": round((len(submitted) / len(current_assignments) * 100) if current_assignments else 0, 1),
         "average_score": round(sum(score_rows) / len(score_rows), 1) if score_rows else 0,
-        "division_scores": [{"name": k, "score": round(sum(v) / len(v), 1)} for k, v in division_scores.items()],
-        "status_counts": {s.value: sum(1 for a in current_assignments if a.status == s) for s in AssignmentStatus},
+        "division_scores": [{"name": name, "score": round(sum(values) / len(values), 1)} for name, values in division_scores.items()],
+        "status_counts": {status.value: sum(1 for a in current_assignments if a.status == status) for status in AssignmentStatus},
         "pending": {"fill": pending_fill, "review": pending_review, "finalize": pending_finalize},
+        "score_source": "manager_score",
     }
 
 
@@ -80,9 +98,7 @@ def history(user_id: int, db: Session = Depends(get_db), user: User = Depends(ge
     target = db.get(User, user_id)
     if not target:
         raise HTTPException(404, "Employee not found")
-    if user.role == Role.employee and user.id != user_id:
-        raise HTTPException(403, "Forbidden")
-    if user.role == Role.manager and target.manager_id != user.id and target.id != user.id:
+    if not _is_admin_or_hr(user) and target.id != user.id and target.manager_id != user.id:
         raise HTTPException(403, "Not your direct report")
     rows = db.scalars(
         select(KpiAssignment)
@@ -93,7 +109,9 @@ def history(user_id: int, db: Session = Depends(get_db), user: User = Depends(ge
     return [
         {
             "month": a.cycle.month.strftime("%b %Y"),
-            "score": a.final_score if a.final_score is not None else a.calculated_score,
+            "score": _official_score(a),
+            "employee_score": a.calculated_score,
+            "manager_score": a.manager_score,
             "status": a.status.value,
         }
         for a in rows
@@ -120,35 +138,32 @@ def monthly_matrix(db: Session = Depends(get_db), user: User = Depends(get_curre
     month_dates = {}
     user_scores = defaultdict(list)
 
-    for a in rows:
-        if not a.cycle or not a.user:
+    for assignment in rows:
+        if not assignment.cycle or not assignment.user:
             continue
-        label = a.cycle.month.strftime("%b %Y")
-        month_dates[label] = a.cycle.month
-        u = a.user
-        des = u.designation
-        dep = des.department if des else None
-        div = dep.division if dep else None
+        label = assignment.cycle.month.strftime("%b %Y")
+        month_dates[label] = assignment.cycle.month
+        employee = assignment.user
+        designation = employee.designation
+        department = designation.department if designation else None
+        division = department.division if department else None
 
-        division_name = div.name if div else "Corporate"
-        department_name = dep.name if dep else "General"
-        designation_name = des.name if des else "Staff"
-
-        info[u.id] = {
-            "employee": u.name,
-            "email": u.email,
-            "division": division_name,
-            "department": department_name,
-            "designation": designation_name,
+        info[employee.id] = {
+            "employee": employee.name,
+            "email": employee.email,
+            "division": division.name if division else "Corporate",
+            "department": department.name if department else "General",
+            "designation": designation.name if designation else "Staff",
         }
-        score_val = float(a.final_score if a.final_score is not None else a.calculated_score)
-        matrix[u.id][label] = score_val
-        user_scores[u.id].append(score_val)
+        score = _official_score(assignment)
+        matrix[employee.id][label] = score
+        if score is not None:
+            user_scores[employee.id].append(score)
 
-    sorted_months = sorted(month_dates.keys(), key=lambda m: month_dates[m])
+    sorted_months = sorted(month_dates.keys(), key=lambda month: month_dates[month])
 
     output_rows = []
-    for uid in sorted(info.keys(), key=lambda u: info[u]["employee"]):
+    for uid in sorted(info.keys(), key=lambda employee_id: info[employee_id]["employee"]):
         scores_list = user_scores[uid]
         overall_avg = round(sum(scores_list) / len(scores_list), 1) if scores_list else 0.0
         latest_sc = scores_list[-1] if scores_list else 0.0
@@ -169,16 +184,14 @@ def monthly_matrix(db: Session = Depends(get_db), user: User = Depends(get_curre
     return {
         "months": sorted_months,
         "rows": output_rows,
+        "score_source": "manager_score",
     }
 
 
-
 def _can_view_user(viewer: User, target: User) -> bool:
-    if viewer.role == Role.superadmin:
+    if _is_admin_or_hr(viewer):
         return True
-    if viewer.role == Role.manager:
-        return target.id == viewer.id or target.manager_id == viewer.id
-    return target.id == viewer.id
+    return target.id == viewer.id or target.manager_id == viewer.id
 
 
 @router.get("/kra-breakdown/{user_id}")
@@ -204,18 +217,28 @@ def kra_breakdown(user_id: int, cycle_id: int | None = None, db: Session = Depen
     assignment = db.scalars(stmt).unique().first()
     if not assignment:
         return {"assignment_id": None, "cycle": None, "rows": []}
-    scores = {r.kpi_item_id: float(r.score or 0) for r in assignment.responses}
-    rows = []
+
+    review_complete = assignment.status in {AssignmentStatus.manager_reviewed, AssignmentStatus.finalized} and assignment.manager_score is not None
+    scores = {response.kpi_item_id: float(response.manager_score or 0) for response in assignment.responses}
+    result_rows = []
     for kra in assignment.template.kras:
-        score = round(sum(scores.get(i.id, 0) for i in kra.items), 2)
-        rows.append({"kra": kra.name, "score": score, "weight": kra.weight, "percent": round(score / kra.weight * 100, 1) if kra.weight else 0})
+        score = round(sum(scores.get(item.id, 0) for item in kra.items), 2) if review_complete else 0.0
+        result_rows.append({
+            "kra": kra.name,
+            "score": score,
+            "weight": kra.weight,
+            "percent": round(score / kra.weight * 100, 1) if kra.weight and review_complete else 0,
+        })
     return {
         "assignment_id": assignment.id,
         "cycle_id": assignment.cycle_id,
         "cycle": assignment.cycle.name,
         "employee": target.name,
-        "final_score": assignment.final_score if assignment.final_score is not None else assignment.calculated_score,
-        "rows": rows,
+        "final_score": _official_score(assignment),
+        "employee_score": assignment.calculated_score,
+        "manager_score": assignment.manager_score,
+        "rows": result_rows,
+        "score_source": "manager_score",
     }
 
 
