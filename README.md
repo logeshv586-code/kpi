@@ -234,9 +234,7 @@ python -m app.seed
 uvicorn app.main:app --reload --port 8000
 ```
 
-If PostgreSQL is not configured locally, omit `DATABASE_URL` from `.env`; the
-backend uses a local `backend/kpi.db` SQLite database for development. Docker
-still uses PostgreSQL through the `DATABASE_URL` value in `docker-compose.yml`.
+If PostgreSQL is not configured locally, update the `DATABASE_URL` in `.env` to point to a valid PostgreSQL database. Docker uses the PostgreSQL instance configured via `DATABASE_URL` in `docker-compose.yml`.
 
 ## Frontend
 

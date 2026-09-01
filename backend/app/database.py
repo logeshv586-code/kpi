@@ -4,10 +4,9 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 
 
 class Settings(BaseSettings):
-    # Local development should work without requiring a separately configured
-    # PostgreSQL instance. Docker and production deployments provide
+    # Local development should use PostgreSQL instance. Docker and production deployments provide
     # DATABASE_URL explicitly and therefore continue to use PostgreSQL.
-    database_url: str = "sqlite:///./kpi.db"
+    database_url: str = "postgresql+psycopg2://kpi:eagle123@localhost:5432/kpi_db"
     secret_key: str = "dev-secret-change-me-please-use-32-plus-characters"
     access_token_expire_minutes: int = 720
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173,http://192.168.1.85:5173,http://localhost:8080,http://127.0.0.1:8080,http://192.168.1.85:8080"
