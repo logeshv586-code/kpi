@@ -109,7 +109,8 @@ class CycleIn(BaseModel):
 
 
 class CycleUpdate(BaseModel):
-    status: str
+    status: str | None = None
+    is_locked: bool | None = None
 
 
 class AssignmentIn(BaseModel):
@@ -129,6 +130,8 @@ class ResponseIn(BaseModel):
     actual_numeric: float | None = None
     answer_text: str | None = None
     selected_option: str | None = None
+    manager_actual_numeric: float | None = None
+    manager_selected_option: str | None = None
     measurement: str | None = None
     remarks: str | None = None
     evidence_url: str | None = None

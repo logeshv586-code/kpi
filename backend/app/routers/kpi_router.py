@@ -478,7 +478,7 @@ def new_version(template_id: int, db: Session = Depends(get_db), user=Depends(re
 def cycles(db: Session = Depends(get_db), _=Depends(get_current_user)):
     rows = db.scalars(select(KpiCycle).order_by(KpiCycle.month.desc())).all()
     return [
-        {"id": c.id, "name": c.name, "month": c.month, "start_date": c.start_date, "end_date": c.end_date, "status": c.status.value}
+        {"id": c.id, "name": c.name, "month": c.month, "start_date": c.start_date, "end_date": c.end_date, "status": c.status.value, "is_locked": c.is_locked}
         for c in rows
     ]
 
@@ -508,13 +508,16 @@ def update_cycle(cycle_id: int, payload: CycleUpdate, db: Session = Depends(get_
     c = db.get(KpiCycle, cycle_id)
     if not c:
         raise HTTPException(404, "Cycle not found")
-    try:
-        c.status = CycleStatus(payload.status)
-    except ValueError:
-        raise HTTPException(400, "Invalid cycle status")
-    audit(db, user.id, "cycle_status", "kpi_cycle", c.id, {"status": c.status.value})
+    if payload.status is not None:
+        try:
+            c.status = CycleStatus(payload.status)
+        except ValueError:
+            raise HTTPException(400, "Invalid cycle status")
+    if payload.is_locked is not None:
+        c.is_locked = payload.is_locked
+    audit(db, user.id, "cycle_status", "kpi_cycle", c.id, {"status": c.status.value, "is_locked": c.is_locked})
     db.commit()
-    return {"ok": True, "status": c.status.value}
+    return {"ok": True, "status": c.status.value, "is_locked": c.is_locked}
 
 
 @router.post("/assignments")
@@ -606,7 +609,12 @@ def _auto_assign_user_on_access(db: Session, user: User):
     if not cycles:
         return
 
-    target_users = db.scalars(select(User).where(User.active.is_(True))).all() if user.role in {Role.superadmin, Role.hr} else [user]
+    if user.role in {Role.superadmin, Role.hr}:
+        target_users = db.scalars(select(User).where(User.active.is_(True))).all()
+    elif user.role == Role.manager:
+        target_users = db.scalars(select(User).where(User.active.is_(True), (User.id == user.id) | (User.manager_id == user.id))).all()
+    else:
+        target_users = [user]
     templates = db.scalars(
         select(KpiTemplate)
         .where(KpiTemplate.status == TemplateStatus.active)
@@ -740,12 +748,15 @@ def get_assignment(assignment_id: int, db: Session = Depends(get_db), user: User
                 "actual_numeric": r.actual_numeric,
                 "answer_text": r.answer_text,
                 "selected_option": r.selected_option,
+                "manager_actual_numeric": r.manager_actual_numeric,
+                "manager_selected_option": r.manager_selected_option,
                 "measurement": r.measurement,
                 "remarks": r.remarks,
                 "evidence_url": r.evidence_url,
                 "evidence_file_id": r.evidence_file_id,
                 "evidence_file": upload_metadata(r.evidence_file_id),
                 "score": r.score,
+                "manager_score": r.manager_score,
                 "achievement_pct": calculate_achievement_percent(r.item, r),
             }
     return {
@@ -810,20 +821,33 @@ def assignment_pdf(assignment_id: int, date_label: str | None = None, db: Sessio
     score = a.final_score if a.final_score is not None else (a.manager_score if a.manager_score is not None else a.calculated_score)
     story.append(Paragraph(f"<b>Score:</b> {score:.1f} / 100 &nbsp;&nbsp; <b>Template:</b> {a.template.name}", styles["BodyText"]))
     story.append(Spacer(1, 10))
-    data = [["KRA / KPI", "Target", "Actual / Answer", "Weight", "Score", "Remarks"]]
+    data = [["KRA / KPI", "Target", "Your Score", "Manager Score", "Weight", "Marks Scored", "Remarks"]]
     for kra in a.template.kras:
-        data.append([Paragraph(f"<b>{kra.name}</b>", styles["BodyText"]), "", "", f"{kra.weight:g}", "", ""])
+        data.append([Paragraph(f"<b>{kra.name}</b>", styles["BodyText"]), "", "", "", f"{kra.weight:g}", "", ""])
         for item in kra.items:
             r = response_map.get(item.id)
             actual = "—"
+            manager_actual = "—"
             remarks = ""
-            item_score = 0
+            m_mark = 0
             if r:
                 actual = r.selected_option or ("—" if r.actual_numeric is None else f"{r.actual_numeric:g}")
+                manager_actual = r.manager_selected_option or ("—" if r.manager_actual_numeric is None else f"{r.manager_actual_numeric:g}")
                 remarks = r.remarks or ""
-                item_score = r.score or 0
-            data.append([Paragraph(item.question, styles["BodyText"]), "—" if item.target_value is None else f"{item.target_value:g}", actual, f"{item.weight:g}", f"{item_score:.1f}", Paragraph(remarks, styles["BodyText"])])
-    table = Table(data, repeatRows=1, colWidths=[58*mm, 20*mm, 28*mm, 16*mm, 16*mm, 42*mm])
+                m_mark = r.manager_score or 0
+            
+            # If manager has not reviewed yet, show employee's mark as provisional
+            mark_display = f"{m_mark:.1f}" if a.manager_score is not None else f"{(r.score or 0):.1f}*"
+            data.append([
+                Paragraph(item.question, styles["BodyText"]), 
+                "—" if item.target_value is None else f"{item.target_value:g}", 
+                actual, 
+                manager_actual, 
+                f"{item.weight:g}", 
+                mark_display, 
+                Paragraph(remarks, styles["BodyText"])
+            ])
+    table = Table(data, repeatRows=1, colWidths=[45*mm, 18*mm, 24*mm, 24*mm, 15*mm, 20*mm, 36*mm])
     table.setStyle(TableStyle([
         ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#EAF2FF")),
         ("TEXTCOLOR", (0,0), (-1,0), colors.HexColor("#0F172A")),
@@ -848,14 +872,23 @@ def save_response(assignment_id: int, payload: list[ResponseIn], db: Session = D
     a = _load_assignment(db, assignment_id)
     if not a:
         raise HTTPException(404, "Assignment not found")
+    if a.cycle.is_locked:
+        raise HTTPException(409, "This KPI cycle has been locked by Super Admin.")
     if user.role == Role.employee and a.user_id != user.id:
         raise HTTPException(403, "Forbidden")
-    if user.role == Role.manager and a.user_id != user.id:
-        raise HTTPException(403, "Managers review KPI submissions; they cannot edit employee answers")
+    if user.role == Role.manager and a.user_id != user.id and a.user.manager_id != user.id:
+        raise HTTPException(403, "Managers review KPI submissions; they cannot edit unless they are the assigned manager")
     _require_published_assignment_template(a)
-    if a.status in {AssignmentStatus.finalized, AssignmentStatus.submitted, AssignmentStatus.manager_reviewed}:
-        if user.role not in {Role.superadmin, Role.hr}:
+    
+    is_manager_mode = user.role in {Role.superadmin, Role.hr, Role.manager} and user.id != a.user_id
+
+    if not is_manager_mode:
+        if a.status in {AssignmentStatus.finalized, AssignmentStatus.submitted, AssignmentStatus.manager_reviewed}:
             raise HTTPException(409, "KPI entry has already been submitted and locked for this period. Employees are permitted only one submission per period. Contact HR or Super Admin to edit or reopen.")
+    else:
+        if a.status == AssignmentStatus.finalized and user.role not in {Role.superadmin, Role.hr}:
+            raise HTTPException(409, "Finalized KPIs cannot be edited by managers.")
+            
     valid_ids = set(db.scalars(select(KpiItem.id).join(Kra).where(Kra.template_id == a.template_id)).all())
     for p in payload:
         if p.kpi_item_id not in valid_ids:
@@ -866,6 +899,10 @@ def save_response(assignment_id: int, payload: list[ResponseIn], db: Session = D
             db.add(r)
         for key, value in p.model_dump().items():
             if key != "kpi_item_id":
+                if not is_manager_mode and key in {"manager_actual_numeric", "manager_selected_option"}:
+                    continue
+                if user.role == Role.manager and is_manager_mode and key in {"actual_numeric", "selected_option"}:
+                    continue
                 setattr(r, key, value)
     if a.status == AssignmentStatus.not_started:
         a.status = AssignmentStatus.draft
@@ -881,6 +918,8 @@ def submit_assignment(assignment_id: int, db: Session = Depends(get_db), user: U
     a = _load_assignment(db, assignment_id)
     if not a:
         raise HTTPException(404, "Assignment not found")
+    if a.cycle.is_locked:
+        raise HTTPException(409, "This KPI cycle has been locked by Super Admin.")
     if user.role == Role.employee and a.user_id != user.id:
         raise HTTPException(403, "Forbidden")
     if user.role == Role.manager and a.user_id != user.id:
@@ -923,6 +962,8 @@ def manager_review(assignment_id: int, payload: ReviewIn, db: Session = Depends(
     a = _load_assignment(db, assignment_id)
     if not a:
         raise HTTPException(404, "Assignment not found")
+    if a.cycle.is_locked:
+        raise HTTPException(409, "This KPI cycle has been locked by Super Admin.")
     if user.role == Role.manager and a.user.manager_id != user.id:
         raise HTTPException(403, "Not your direct report")
     if a.status != AssignmentStatus.submitted:
@@ -934,7 +975,7 @@ def manager_review(assignment_id: int, payload: ReviewIn, db: Session = Depends(
         db.commit()
         _notify(a.user, f"KPI returned - {a.cycle.name}", payload.comments or "Your KPI was returned for correction.")
         return {"ok": True, "status": a.status.value}
-    score = payload.score_override if payload.score_override is not None else a.calculated_score
+    score = payload.score_override if payload.score_override is not None else (a.manager_score if a.manager_score is not None else a.calculated_score)
     a.manager_score = score
     a.status = AssignmentStatus.manager_reviewed
     db.add(KpiReview(assignment_id=a.id, reviewer_id=user.id, stage="manager", **payload.model_dump()))

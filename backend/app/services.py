@@ -111,7 +111,7 @@ def _threshold_score_pct(actual: float, thresholds: list[dict], direction: str) 
     return 0.0
 
 
-def calculate_item_score(item: KpiItem, response: KpiResponse) -> float:
+def calculate_item_score(item: KpiItem, response: KpiResponse, is_manager: bool = False) -> float:
     cfg = item_config(item)
     meta = cfg["meta"]
     scoring_method = meta.get("scoring_method", "target_ratio")
@@ -119,9 +119,10 @@ def calculate_item_score(item: KpiItem, response: KpiResponse) -> float:
     cap_ratio = max(0.0, cap_pct / 100.0)
 
     if item.input_type in {"percentage", "number", "currency", "days", "count"}:
-        if response.actual_numeric is None:
+        actual_val = response.manager_actual_numeric if is_manager else response.actual_numeric
+        if actual_val is None:
             return 0.0
-        actual = float(response.actual_numeric)
+        actual = float(actual_val)
 
         if scoring_method == "threshold":
             pct = _threshold_score_pct(actual, cfg["thresholds"], item.direction)
@@ -150,16 +151,18 @@ def calculate_item_score(item: KpiItem, response: KpiResponse) -> float:
         return round(float(item.weight) * ratio, 2)
 
     if item.input_type in {"choice", "yesno"}:
-        if not response.selected_option:
+        selected = response.manager_selected_option if is_manager else response.selected_option
+        if not selected:
             return 0.0
-        pct = float(cfg["score_map"].get(response.selected_option, 0))
+        pct = float(cfg["score_map"].get(selected, 0))
         return round(float(item.weight) * max(0.0, min(pct / 100.0, cap_ratio)), 2)
 
     if item.input_type == "rating":
-        if response.actual_numeric is None:
+        actual_val = response.manager_actual_numeric if is_manager else response.actual_numeric
+        if actual_val is None:
             return 0.0
         max_rating = max(1.0, float(cfg["max_rating"] or 5))
-        return round(float(item.weight) * max(0.0, min(float(response.actual_numeric) / max_rating, cap_ratio)), 2)
+        return round(float(item.weight) * max(0.0, min(float(actual_val) / max_rating, cap_ratio)), 2)
 
     return 0.0
 
@@ -181,9 +184,13 @@ def recalc_assignment(db: Session, assignment_id: int) -> float:
     if not assignment:
         return 0.0
     total = 0.0
+    manager_total = 0.0
     for response in assignment.responses:
-        response.score = calculate_item_score(response.item, response)
+        response.score = calculate_item_score(response.item, response, is_manager=False)
+        response.manager_score = calculate_item_score(response.item, response, is_manager=True)
         total += response.score
+        manager_total += response.manager_score
     assignment.calculated_score = round(min(total, 100.0), 2)
+    assignment.manager_score = round(min(manager_total, 100.0), 2)
     db.flush()
     return assignment.calculated_score

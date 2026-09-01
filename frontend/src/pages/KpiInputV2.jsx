@@ -17,7 +17,7 @@ function monthLabel(a){
   return a?.cycle || value || 'Unknown month'
 }
 
-function scoreItem(item,value){
+function scoreItem(item,value,prefix=''){
   const v = value || {}
   const cfg = item.config || {}
   const meta = cfg.meta || {}
@@ -25,13 +25,13 @@ function scoreItem(item,value){
   const cap = Math.max(0,Number(meta.score_cap_pct ?? 100) / 100)
 
   if (['choice','yesno'].includes(item.input_type)) {
-    if (!v.selected_option) return 0
-    const pct = Number((cfg.score_map || {})[v.selected_option] || 0)
+    if (!v[`${prefix}selected_option`]) return 0
+    const pct = Number((cfg.score_map || {})[v[`${prefix}selected_option`]] || 0)
     return Math.round(weight * Math.max(0,Math.min(pct / 100,cap)) * 100) / 100
   }
 
-  if (v.actual_numeric === null || v.actual_numeric === undefined || v.actual_numeric === '') return 0
-  const actual = Number(v.actual_numeric)
+  if (v[`${prefix}actual_numeric`] === null || v[`${prefix}actual_numeric`] === undefined || v[`${prefix}actual_numeric`] === '') return 0
+  const actual = Number(v[`${prefix}actual_numeric`])
   if (!Number.isFinite(actual)) return 0
 
   let ratio = 0
@@ -53,14 +53,14 @@ function scoreItem(item,value){
   return Math.round(weight * ratio * 100) / 100
 }
 
-function scoreAchievement(item,value){
+function scoreAchievement(item,value,prefix=''){
   const weight = Number(item.weight || 0)
-  return weight ? Math.round(scoreItem(item,value) / weight * 1000) / 10 : 0
+  return weight ? Math.round(scoreItem(item,value,prefix) / weight * 1000) / 10 : 0
 }
 
-function numericProgress(item,value){
+function numericProgress(item,value,prefix=''){
   if (!['number','percentage','currency','days','count'].includes(item.input_type)) return null
-  const actualRaw = value?.actual_numeric
+  const actualRaw = value?.[`${prefix}actual_numeric`]
   const targetRaw = item.target_value
   if (actualRaw === null || actualRaw === undefined || actualRaw === '' || targetRaw === null || targetRaw === undefined) return null
   const actual = Number(actualRaw)
@@ -76,7 +76,7 @@ function numericProgress(item,value){
       lower:true,
       withinTarget:actual <= target,
       variance:Math.max(actual - target,0),
-      achievement:scoreAchievement(item,value),
+      achievement:scoreAchievement(item,value,prefix),
     }
   }
 
@@ -89,7 +89,7 @@ function numericProgress(item,value){
     lower:false,
     remaining,
     rawAchievement:Math.round(rawAchievement * 10) / 10,
-    achievement:scoreAchievement(item,value),
+    achievement:scoreAchievement(item,value,prefix),
   }
 }
 
@@ -98,13 +98,13 @@ function formatNumber(value){
   return Number(value).toLocaleString(undefined,{maximumFractionDigits:2})
 }
 
-function AnswerInput({item,value,onChange,disabled}){
+function AnswerInput({item,value,onChange,disabled,prefix=''}){
   const v = value || {}
   const cfg = item.config || {}
 
   if (['choice','yesno'].includes(item.input_type)) {
     const options = Object.keys(cfg.score_map || {})
-    return <select disabled={disabled} value={v.selected_option || ''} onChange={e=>onChange({selected_option:e.target.value})}>
+    return <select disabled={disabled} value={v[`${prefix}selected_option`] || ''} onChange={e=>onChange({[`${prefix}selected_option`]:e.target.value})}>
       <option value="">Select result...</option>
       {options.map(option=><option key={option} value={option}>{option}</option>)}
     </select>
@@ -115,23 +115,23 @@ function AnswerInput({item,value,onChange,disabled}){
     type="number"
     min="0"
     step="0.01"
-    value={v.actual_numeric ?? ''}
-    onChange={e=>onChange({actual_numeric:e.target.value === '' ? null : Number(e.target.value)})}
+    value={v[`${prefix}actual_numeric`] ?? ''}
+    onChange={e=>onChange({[`${prefix}actual_numeric`]:e.target.value === '' ? null : Number(e.target.value)})}
     placeholder={item.target_value != null ? `Enter completed result (target ${item.target_value})` : 'Enter actual result'}
   />
 }
 
-function ResultSummary({item,value}){
+function ResultSummary({item,value,prefix=''}){
   const cfg = item.config || {}
   if (['choice','yesno'].includes(item.input_type)) {
-    if (!value?.selected_option) return <div className="cell-help" style={{marginTop:'6px'}}>Choose one configured result option.</div>
-    const pct = Number((cfg.score_map || {})[value.selected_option] || 0)
+    if (!value?.[`${prefix}selected_option`]) return <div className="cell-help" style={{marginTop:'6px'}}>Choose one configured result option.</div>
+    const pct = Number((cfg.score_map || {})[value[`${prefix}selected_option`]] || 0)
     return <div style={{marginTop:'7px',padding:'7px 9px',borderRadius:'7px',background:'#f8fafc',border:'1px solid #e2e8f0',fontSize:'0.78rem'}}>
-      <strong>{value.selected_option}</strong> = {pct}% achievement
+      <strong>{value[`${prefix}selected_option`]}</strong> = {pct}% achievement
     </div>
   }
 
-  const progress = numericProgress(item,value)
+  const progress = numericProgress(item,value,prefix)
   if (!progress) return <div className="cell-help" style={{marginTop:'6px'}}>Enter the completed result to calculate remaining and marks.</div>
   const suffix = progress.unit ? ` ${progress.unit}` : ''
 
@@ -170,8 +170,15 @@ export default function KpiInputV2(){
   const [importBusy,setImportBusy] = useState(false)
 
   const isAdminOrHr = ['superadmin','hr'].includes(user?.role)
+  const isAssignedManager = assignment && user?.role === 'manager' && assignment.manager_id === user.id
+  const isManagerMode = isAdminOrHr || isAssignedManager
   const submitted = assignment && ['submitted','manager_reviewed','finalized'].includes(assignment.status)
-  const locked = submitted && !isAdminOrHr
+  
+  // Employee gets locked out after submit
+  const locked = (submitted && !isManagerMode) || (assignment?.cycle_status === 'closed')
+
+  // Managers can edit the Manager Score until finalized
+  const managerLocked = (assignment?.status === 'finalized' && !isAdminOrHr) || (assignment?.cycle_status === 'closed')
 
   const loadList = () => api.get('/kpi/my')
     .then(r=>{
@@ -251,6 +258,7 @@ export default function KpiInputV2(){
   const missing = allItems.filter(item=>!isAnswered(item))
   const completion = allItems.length ? Math.round((allItems.length - missing.length) / allItems.length * 100) : 0
   const liveScore = Math.min(100,Math.round(allItems.reduce((sum,item)=>sum+scoreItem(item,values[item.id]),0)*100)/100)
+  const liveManagerScore = Math.min(100,Math.round(allItems.reduce((sum,item)=>sum+scoreItem(item,values[item.id],'manager_'),0)*100)/100)
   const ready = allItems.length > 0 && missing.length === 0
 
   function setValue(itemId,patch){
@@ -265,6 +273,8 @@ export default function KpiInputV2(){
       actual_numeric:values[item.id]?.actual_numeric ?? null,
       answer_text:values[item.id]?.answer_text ?? null,
       selected_option:values[item.id]?.selected_option ?? null,
+      manager_actual_numeric:values[item.id]?.manager_actual_numeric ?? null,
+      manager_selected_option:values[item.id]?.manager_selected_option ?? null,
       measurement:values[item.id]?.remarks ?? values[item.id]?.measurement ?? null,
       remarks:values[item.id]?.remarks ?? null,
       evidence_url:values[item.id]?.evidence_url ?? null,
@@ -428,8 +438,7 @@ export default function KpiInputV2(){
       <div className="metric-grid compact">
         <Card><span>Employee</span><strong className="small-metric">{assignment.employee}{assignment.employee_no?` (${assignment.employee_no})`:''}</strong></Card>
         <Card><span>Month</span><strong className="small-metric">{monthLabel(currentSummary)}</strong></Card>
-        <Card><span>Completion</span><strong>{completion}%</strong><div className="bar"><i style={{width:`${completion}%`}}/></div></Card>
-        <Card><span>Live marks scored</span><strong>{liveScore.toFixed(1)} / 100</strong><Status value={assignment.status}/></Card>
+        <Card><span>Live scores</span><div style={{display:'flex',gap:'10px'}}><div><span style={{fontSize:'0.75rem'}}>Yours: </span><strong>{liveScore.toFixed(1)}</strong></div><div><span style={{fontSize:'0.75rem'}}>Manager: </span><strong>{liveManagerScore.toFixed(1)}</strong></div></div><Status value={assignment.status}/></Card>
       </div>
 
       {!locked?<Card style={{marginBottom:'14px',borderLeft:ready?'4px solid #16a34a':'4px solid #f59e0b',background:ready?'#f0fdf4':'#fffbeb'}}><div style={{display:'flex',gap:'10px',alignItems:'center'}}>{ready?<CheckCircle2 size={20} style={{color:'#16a34a'}}/>:<Info size={20} style={{color:'#d97706'}}/>}<div><strong>{ready?'Ready to submit':'Complete KPI results'}</strong><div className="cell-help">{ready?`All KPI results are filled. Current score ${liveScore.toFixed(1)}/100. Optional PDF/description can be empty.`:`${missing.length} KPI result${missing.length===1?'':'s'} remaining.`}</div></div></div></Card>:null}
@@ -445,12 +454,13 @@ export default function KpiInputV2(){
 
             <div className="table-wrap">
               <table className="kpi-input-table">
-                <thead><tr><th>KPI parameter & task</th><th>Expected target / criteria</th><th>Your actual result</th><th>Weight</th><th>Marks scored</th><th>Optional description & PDF</th></tr></thead>
+                <thead><tr><th>KPI parameter & task</th><th>Expected target / criteria</th><th>Your Score</th><th>Manager Score</th><th>Weight</th><th>Marks scored</th><th>Optional description & PDF</th></tr></thead>
                 <tbody>
                   {kra.items.map(item=>{
                     const v = values[item.id] || {}
                     const meta = item.config?.meta || {}
                     const mark = scoreItem(item,v)
+                    const mMark = scoreItem(item,v,'manager_')
                     const scoreMap = item.config?.score_map || {}
                     const unit = meta.unit || (item.input_type==='percentage'?'%':'')
                     return <tr key={item.id} style={{verticalAlign:'top'}}>
@@ -471,10 +481,20 @@ export default function KpiInputV2(){
                         <AnswerInput disabled={locked} item={item} value={v} onChange={patch=>setValue(item.id,patch)}/>
                         <ResultSummary item={item} value={v}/>
                       </td>
+                      <td>
+                        <AnswerInput disabled={managerLocked || !isManagerMode} item={item} value={v} prefix="manager_" onChange={patch=>setValue(item.id,patch)}/>
+                        <ResultSummary item={item} value={v} prefix="manager_"/>
+                      </td>
                       <td><strong>{item.weight}</strong></td>
                       <td>
-                        <strong style={{fontSize:'1.08rem',color:'#2563eb'}}>{mark.toFixed(1)}</strong><span className="muted"> / {item.weight}</span>
-                        <div className="cell-help">Score achievement: {scoreAchievement(item,v).toFixed(1)}%</div>
+                        <div style={{marginBottom:'6px'}}>
+                          <div style={{fontSize:'0.75rem',color:'#64748b'}}>Your Score</div>
+                          <strong style={{fontSize:'1.08rem',color:'#2563eb'}}>{mark.toFixed(1)}</strong><span className="muted"> / {item.weight}</span>
+                        </div>
+                        <div>
+                          <div style={{fontSize:'0.75rem',color:'#64748b'}}>Manager Score</div>
+                          <strong style={{fontSize:'1.08rem',color:'#16a34a'}}>{mMark.toFixed(1)}</strong><span className="muted"> / {item.weight}</span>
+                        </div>
                       </td>
                       <td>
                         <div className="stack-tight">

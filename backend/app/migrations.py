@@ -16,10 +16,24 @@ def ensure_schema_upgrades():
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE kpi_responses ADD COLUMN measurement TEXT"))
             inspector = inspect(engine)
+        if "manager_actual_numeric" not in columns:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE kpi_responses ADD COLUMN manager_actual_numeric FLOAT"))
+        if "manager_selected_option" not in columns:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE kpi_responses ADD COLUMN manager_selected_option VARCHAR(120)"))
+        if "manager_score" not in columns:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE kpi_responses ADD COLUMN manager_score FLOAT DEFAULT 0"))
         indexes = {idx.get("name") for idx in inspector.get_indexes("kpi_responses")}
         if "ix_kpi_responses_evidence_file_id" not in indexes:
             with engine.begin() as conn:
                 conn.execute(text("CREATE INDEX ix_kpi_responses_evidence_file_id ON kpi_responses (evidence_file_id)"))
+    if "kpi_cycles" in tables:
+        columns = {c["name"] for c in inspector.get_columns("kpi_cycles")}
+        if "is_locked" not in columns:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE kpi_cycles ADD COLUMN is_locked BOOLEAN DEFAULT FALSE"))
     if "kpi_templates" in tables:
         columns = {c["name"] for c in inspector.get_columns("kpi_templates")}
         with engine.begin() as conn:

@@ -35,6 +35,13 @@ export default function Cycles() {
       load()
     } catch (e) { setError(getError(e)) }
   }
+  
+  async function toggleLock(id, is_locked) {
+    try {
+      await api.patch(`/kpi/cycles/${id}`, {is_locked})
+      load()
+    } catch (e) { setError(getError(e)) }
+  }
 
   return <>
     <PageHeader title="KPI Cycles" subtitle="Control the monthly KPI period. Closed cycles preserve historical scores." actions={<button className="primary" onClick={() => setShow(!show)}>Create Cycle</button>}/>
@@ -48,8 +55,8 @@ export default function Cycles() {
       <button className="primary align-end" onClick={create}>Save cycle</button>
     </div></Card> : null}
     {!rows ? <Loader/> : <Card><div className="table-wrap"><table>
-      <thead><tr><th>Cycle</th><th>Month</th><th>Start</th><th>End</th><th>Status</th><th>Change status</th></tr></thead>
-      <tbody>{rows.map(c => <tr key={c.id}><td><strong>{c.name}</strong></td><td>{c.month}</td><td>{c.start_date}</td><td>{c.end_date}</td><td><Status value={c.status}/></td><td><select value={c.status} onChange={e => changeStatus(c.id,e.target.value)}><option value="upcoming">Upcoming</option><option value="running">Running</option><option value="closed">Closed</option></select></td></tr>)}</tbody>
+      <thead><tr><th>Cycle</th><th>Month</th><th>Start</th><th>End</th><th>Status</th><th>Change status</th><th>Admin Lock</th></tr></thead>
+      <tbody>{rows.map(c => <tr key={c.id}><td><strong>{c.name}</strong></td><td>{c.month}</td><td>{c.start_date}</td><td>{c.end_date}</td><td><Status value={c.status}/></td><td><select value={c.status} onChange={e => changeStatus(c.id,e.target.value)}><option value="upcoming">Upcoming</option><option value="running">Running</option><option value="closed">Closed</option></select></td><td><label style={{display:'flex',gap:'8px',alignItems:'center',cursor:'pointer'}}><input type="checkbox" checked={c.is_locked || false} onChange={e => toggleLock(c.id, e.target.checked)}/> {c.is_locked ? 'Locked' : 'Open'}</label></td></tr>)}</tbody>
     </table></div></Card>}
   </>
 }

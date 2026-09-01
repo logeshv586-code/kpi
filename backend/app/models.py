@@ -128,6 +128,7 @@ class KpiCycle(Base):
     start_date: Mapped[date] = mapped_column(Date)
     end_date: Mapped[date] = mapped_column(Date)
     status: Mapped[CycleStatus] = mapped_column(Enum(CycleStatus), default=CycleStatus.upcoming)
+    is_locked: Mapped[bool] = mapped_column(Boolean, default=False)
     assignments = relationship("KpiAssignment", back_populates="cycle", cascade="all, delete-orphan")
 
 
@@ -159,11 +160,14 @@ class KpiResponse(Base):
     actual_numeric: Mapped[float | None] = mapped_column(Float, nullable=True)
     answer_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     selected_option: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    manager_actual_numeric: Mapped[float | None] = mapped_column(Float, nullable=True)
+    manager_selected_option: Mapped[str | None] = mapped_column(String(120), nullable=True)
     measurement: Mapped[str | None] = mapped_column(Text, nullable=True)
     remarks: Mapped[str | None] = mapped_column(Text, nullable=True)
     evidence_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     evidence_file_id: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
     score: Mapped[float] = mapped_column(Float, default=0)
+    manager_score: Mapped[float] = mapped_column(Float, default=0)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     assignment = relationship("KpiAssignment", back_populates="responses")
     item = relationship("KpiItem")
