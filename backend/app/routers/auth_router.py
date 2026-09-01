@@ -10,10 +10,17 @@ from ..schemas import ChangePasswordIn, LoginIn
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
-def user_payload(user: User):
+def user_payload(user: User, db: Session | None = None):
     designation = user.designation
     department = designation.department if designation else None
     division = department.division if department else None
+    is_reporting_manager = False
+    if db is not None:
+        is_reporting_manager = db.scalar(
+            select(User.id)
+            .where(User.manager_id == user.id, User.active.is_(True))
+            .limit(1)
+        ) is not None
     return {
         "id": user.id,
         "name": user.name,
@@ -25,6 +32,10 @@ def user_payload(user: User):
         "department": department.name if department else None,
         "division": division.name if division else None,
         "permissions": user_permissions(user),
+        # A person does not need the stored System Role "Manager" to review
+        # direct reports. The Reports To relationship grants this capability.
+        "is_reporting_manager": is_reporting_manager,
+        "review_scope": "all" if user.role.value in {"superadmin", "hr"} else ("direct_reports" if is_reporting_manager else "self"),
     }
 
 
@@ -37,7 +48,7 @@ def login(payload: LoginIn, db: Session = Depends(get_db)):
     )
     if not user or not verify_password(payload.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid email or password")
-    return {"access_token": create_token(user), "token_type": "bearer", "user": user_payload(user)}
+    return {"access_token": create_token(user), "token_type": "bearer", "user": user_payload(user, db)}
 
 
 @router.get("/me")
@@ -47,7 +58,7 @@ def me(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
         .where(User.id == user.id)
         .options(joinedload(User.designation).joinedload(Designation.department).joinedload(Department.division))
     )
-    return user_payload(hydrated)
+    return user_payload(hydrated, db)
 
 
 @router.post("/change-password")
