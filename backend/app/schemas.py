@@ -5,6 +5,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 class LoginIn(BaseModel):
     email: str
     password: str
+    captcha_id: str | None = None
+    captcha_code: str | None = None
 
     @field_validator("email")
     @classmethod

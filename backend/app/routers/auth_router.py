@@ -3,11 +3,19 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
 from ..auth import create_token, get_current_user, hash_password, user_permissions, verify_password
+from ..captcha import generate_captcha_svg, verify_captcha
 from ..database import get_db
 from ..models import Department, Designation, User
 from ..schemas import ChangePasswordIn, LoginIn
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+
+@router.get("/captcha")
+def get_captcha():
+    """Generate a one-time visual captcha challenge."""
+    captcha_id, svg = generate_captcha_svg()
+    return {"captcha_id": captcha_id, "svg": svg}
 
 
 def user_payload(user: User, db: Session | None = None):
@@ -41,6 +49,10 @@ def user_payload(user: User, db: Session | None = None):
 
 @router.post("/login")
 def login(payload: LoginIn, db: Session = Depends(get_db)):
+    is_valid, error_msg = verify_captcha(payload.captcha_id, payload.captcha_code)
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=error_msg or "Invalid captcha code")
+
     user = db.scalar(
         select(User)
         .where(User.email == payload.email)
