@@ -100,7 +100,7 @@ export default function Layout({children}) {
             <div className="crumb">Monthly KPI Performance Management</div>
           </div>
           <div className="top-context">
-            <span>{user?.department || 'Organization'}</span>
+            <span>{user?.department || 'Eagle Software'}</span>
             <div className="avatar small">{user?.name?.slice(0, 1)}</div>
           </div>
         </header>
