@@ -1,5 +1,5 @@
 import {useEffect,useMemo,useState} from 'react'
-import {Award,BarChart2,Download,TrendingUp,Users} from 'lucide-react'
+import {Award,BarChart2,CheckCircle2,Clock3,Download,TrendingUp,UserCheck,Users} from 'lucide-react'
 import {api,getError} from '../lib/api'
 import {useAuth} from '../lib/auth'
 import {Card,ErrorBox,Loader,PageHeader,Score} from '../components/UI'
@@ -11,58 +11,45 @@ const whole=value=>Math.round(Number(value||0))
 
 export default function Reports(){
   const{user}=useAuth()
-  const[data,setData]=useState(null)
-  const[reviewType,setReviewType]=useState('monthly')
-  const[financialYear,setFinancialYear]=useState('')
-  const[periodKey,setPeriodKey]=useState('all')
-  const[department,setDepartment]=useState('All')
-  const[error,setError]=useState('')
+  const[data,setData]=useState(null),[pending,setPending]=useState(null)
+  const[reviewType,setReviewType]=useState('monthly'),[financialYear,setFinancialYear]=useState(''),[periodKey,setPeriodKey]=useState('all'),[department,setDepartment]=useState('All'),[error,setError]=useState('')
 
   const isOrgAdmin=['superadmin','hr'].includes(user?.role)
   const title=isOrgAdmin?'Performance Reports':(user?.role==='manager'||user?.is_reporting_manager)?'Team Performance Reports':'My Performance Report'
   const subtitle='View whole-number KPI results by Monthly, Quarterly, Half-Yearly or Annual financial-year review.'
 
-  useEffect(()=>{api.get('/dashboard/review-matrix').then(r=>setData(r.data)).catch(e=>setError(getError(e)))},[])
+  useEffect(()=>{Promise.all([api.get('/dashboard/review-matrix'),api.get('/kpi/pending-summary')]).then(([matrix,status])=>{setData(matrix.data);setPending(status.data)}).catch(e=>setError(getError(e)))},[])
 
   const periods=useMemo(()=>[...(data?.periods||[])].sort((a,b)=>String(a.month).localeCompare(String(b.month))||(typeOrder[a.review_type]??99)-(typeOrder[b.review_type]??99)),[data])
   const financialYears=useMemo(()=>[...new Set(periods.map(p=>p.financial_year).filter(Boolean))].sort().reverse(),[periods])
   useEffect(()=>{if(!financialYear&&financialYears.length)setFinancialYear(financialYears[0])},[financialYears,financialYear])
-
   const availableTypes=useMemo(()=>[...new Set(periods.filter(p=>!financialYear||p.financial_year===financialYear).map(p=>p.review_type))].sort((a,b)=>(typeOrder[a]??99)-(typeOrder[b]??99)),[periods,financialYear])
   useEffect(()=>{if(availableTypes.length&&!availableTypes.includes(reviewType)){setReviewType(availableTypes[0]);setPeriodKey('all')}},[availableTypes,reviewType])
-
   const filteredPeriods=useMemo(()=>periods.filter(p=>p.review_type===reviewType&&(!financialYear||p.financial_year===financialYear)),[periods,reviewType,financialYear])
   useEffect(()=>{if(periodKey!=='all'&&!filteredPeriods.some(p=>p.key===periodKey))setPeriodKey('all')},[filteredPeriods,periodKey])
   const selectedPeriods=useMemo(()=>periodKey==='all'?filteredPeriods:filteredPeriods.filter(p=>p.key===periodKey),[filteredPeriods,periodKey])
   const selectedKeys=useMemo(()=>new Set(selectedPeriods.map(p=>p.key)),[selectedPeriods])
   const selectedPeriodLabel=periodKey==='all'?`All ${typeLabel[reviewType]||reviewType} · ${financialYear||'All FY'}`:(selectedPeriods[0]?.label||'Selected period')
-
   const departments=useMemo(()=>['All',...new Set((data?.rows||[]).map(r=>r.department).filter(Boolean))].sort((a,b)=>a==='All'?-1:b==='All'?1:a.localeCompare(b)),[data])
 
   const rows=useMemo(()=>{
-    return(data?.rows||[])
-      .filter(r=>department==='All'||r.department===department)
-      .map(r=>{
-        const values=Object.entries(r.scores||{}).filter(([key,value])=>selectedKeys.has(key)&&value!==null&&value!==undefined).map(([,value])=>Number(value)).filter(Number.isFinite)
-        const empValues=Object.entries(r.employee_scores||{}).filter(([key,value])=>selectedKeys.has(key)&&value!==null&&value!==undefined).map(([,value])=>Number(value)).filter(Number.isFinite)
-        const mgrValues=Object.entries(r.manager_scores||{}).filter(([key,value])=>selectedKeys.has(key)&&value!==null&&value!==undefined).map(([,value])=>Number(value)).filter(Number.isFinite)
-        const score=values.length?whole(values.reduce((s,v)=>s+v,0)/values.length):null
-        const empScore=empValues.length?whole(empValues.reduce((s,v)=>s+v,0)/empValues.length):null
-        const mgrScore=mgrValues.length?whole(mgrValues.reduce((s,v)=>s+v,0)/mgrValues.length):null
-        return{...r,display_score:score,display_emp_score:empScore,display_mgr_score:mgrScore,display_band:score!=null?getRatingBand(score):'Not Evaluated'}
-      })
-      .filter(r=>r.display_score!==null||r.display_emp_score!==null||r.display_mgr_score!==null)
+    return(data?.rows||[]).filter(r=>department==='All'||r.department===department).map(r=>{
+      const values=Object.entries(r.scores||{}).filter(([key,value])=>selectedKeys.has(key)&&value!==null&&value!==undefined).map(([,value])=>Number(value)).filter(Number.isFinite)
+      const empValues=Object.entries(r.employee_scores||{}).filter(([key,value])=>selectedKeys.has(key)&&value!==null&&value!==undefined).map(([,value])=>Number(value)).filter(Number.isFinite)
+      const mgrValues=Object.entries(r.manager_scores||{}).filter(([key,value])=>selectedKeys.has(key)&&value!==null&&value!==undefined).map(([,value])=>Number(value)).filter(Number.isFinite)
+      const score=values.length?whole(values.reduce((s,v)=>s+v,0)/values.length):null
+      const empScore=empValues.length?whole(empValues.reduce((s,v)=>s+v,0)/empValues.length):null
+      const mgrScore=mgrValues.length?whole(mgrValues.reduce((s,v)=>s+v,0)/mgrValues.length):null
+      return{...r,display_score:score,display_emp_score:empScore,display_mgr_score:mgrScore,display_band:score!=null?getRatingBand(score):'Not Evaluated'}
+    }).filter(r=>r.display_score!==null||r.display_emp_score!==null||r.display_mgr_score!==null)
   },[data,department,selectedKeys])
 
   const metrics=useMemo(()=>{
     const valid=rows.filter(r=>r.display_score!=null)
     if(!valid.length)return{avg:0,highCount:0,total:0,topDepartment:'N/A'}
-    const avg=whole(valid.reduce((s,r)=>s+Number(r.display_score),0)/valid.length)
-    const highCount=valid.filter(r=>Number(r.display_score)>=90).length
-    const grouped={}
+    const avg=whole(valid.reduce((s,r)=>s+Number(r.display_score),0)/valid.length),highCount=valid.filter(r=>Number(r.display_score)>=90).length,grouped={}
     valid.forEach(r=>{if(!r.department)return;if(!grouped[r.department])grouped[r.department]={total:0,count:0};grouped[r.department].total+=Number(r.display_score);grouped[r.department].count+=1})
-    let topDepartment='N/A',top=-1
-    Object.entries(grouped).forEach(([name,value])=>{const score=value.total/value.count;if(score>top){top=score;topDepartment=name}})
+    let topDepartment='N/A',top=-1;Object.entries(grouped).forEach(([name,value])=>{const score=value.total/value.count;if(score>top){top=score;topDepartment=name}})
     return{avg,highCount,total:valid.length,topDepartment}
   },[rows])
 
@@ -70,8 +57,7 @@ export default function Reports(){
     if(!rows.length)return
     const head=['Employee','Email','Financial Year','Review Type','Period','Department','Designation','Reports To','Employee Score','Manager Score','Final Score','Rating Band']
     const lines=[head.join(','),...rows.map(r=>[r.employee,r.email||'',financialYear,typeLabel[reviewType]||reviewType,selectedPeriodLabel,r.department||'',r.designation||'',r.manager||'',r.display_emp_score??'N/A',r.display_mgr_score??'N/A',r.display_score??'N/A',r.display_band].map(x=>`"${String(x).replaceAll('"','""')}"`).join(','))]
-    const blob=new Blob([lines.join('\n')],{type:'text/csv'}),url=URL.createObjectURL(blob),a=document.createElement('a')
-    a.href=url;a.download=`kpi-${reviewType}-${financialYear||'report'}`.toLowerCase().replace(/\s+/g,'-')+'.csv';a.click();URL.revokeObjectURL(url)
+    const blob=new Blob([lines.join('\n')],{type:'text/csv'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`kpi-${reviewType}-${financialYear||'report'}`.toLowerCase().replace(/\s+/g,'-')+'.csv';a.click();URL.revokeObjectURL(url)
   }
   function bandClass(band){if(band==='Outstanding')return'status-finalized';if(band==='Very Good'||band==='Good')return'status-manager_reviewed';if(band==='Needs Improvement')return'status-submitted';return'status-draft'}
 
@@ -80,6 +66,12 @@ export default function Reports(){
     <ErrorBox error={error}/>
     {!data?<Loader/>:<>
       <div className="helper-strip" style={{marginBottom:'14px'}}><strong>Report:</strong> {selectedPeriodLabel} · April–March financial year · scores rounded to whole integers.</div>
+      {pending?<div className="metric-grid compact pending-metrics" style={{marginBottom:'16px'}}>
+        <Card><div className="metric-label"><Clock3 size={16}/><span>Staff Pending</span></div><strong className="small-metric">{pending.pending_staff||0}</strong><div className="cell-help">Not started / draft</div></Card>
+        <Card><div className="metric-label"><UserCheck size={16}/><span>Manager Review Pending</span></div><strong className="small-metric">{pending.pending_manager_review||0}</strong><div className="cell-help">Staff submitted</div></Card>
+        <Card><div className="metric-label"><CheckCircle2 size={16}/><span>Ready for HR</span></div><strong className="small-metric">{pending.ready_for_hr||0}</strong><div className="cell-help">Manager reviewed</div></Card>
+        <Card><div className="metric-label"><CheckCircle2 size={16}/><span>Finalized</span></div><strong className="small-metric">{pending.finalized||0}</strong><div className="cell-help">HR completed</div></Card>
+      </div>:null}
       <div className="metric-grid compact" style={{marginBottom:'16px'}}>
         <Card><div className="metric-label"><BarChart2 size={16}/><span>Average Score</span></div><strong className="small-metric">{metrics.avg}</strong></Card>
         <Card><div className="metric-label"><Award size={16}/><span>High Performers (≥90)</span></div><strong className="small-metric">{metrics.highCount}</strong></Card>
