@@ -71,8 +71,6 @@ class User(Base):
     role: Mapped[Role] = mapped_column(Enum(Role), default=Role.employee)
     manager_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     designation_id: Mapped[int | None] = mapped_column(ForeignKey("designations.id"), nullable=True)
-    # An explicit template wins over the hierarchy-derived template for this user.
-    # It lets HR assign a prepared KPI form while creating or editing an employee.
     kpi_template_id: Mapped[int | None] = mapped_column(ForeignKey("kpi_templates.id"), nullable=True)
     access_permissions: Mapped[dict] = mapped_column(JSON, default=dict)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -127,6 +125,9 @@ class KpiCycle(Base):
     month: Mapped[date] = mapped_column(Date)
     start_date: Mapped[date] = mapped_column(Date)
     end_date: Mapped[date] = mapped_column(Date)
+    review_type: Mapped[str] = mapped_column(String(24), default="monthly", nullable=False)
+    financial_year: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    period_label: Mapped[str | None] = mapped_column(String(80), nullable=True)
     status: Mapped[CycleStatus] = mapped_column(Enum(CycleStatus), default=CycleStatus.upcoming)
     is_locked: Mapped[bool] = mapped_column(Boolean, default=False)
     assignments = relationship("KpiAssignment", back_populates="cycle", cascade="all, delete-orphan")

@@ -2,6 +2,9 @@ from datetime import date
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
+REVIEW_TYPES = {"monthly", "quarterly", "half_yearly", "annual"}
+
+
 class LoginIn(BaseModel):
     email: str
     password: str
@@ -108,6 +111,17 @@ class CycleIn(BaseModel):
     start_date: date
     end_date: date
     status: str = "upcoming"
+    review_type: str = "monthly"
+    financial_year: str | None = None
+    period_label: str | None = None
+
+    @field_validator("review_type")
+    @classmethod
+    def validate_review_type(cls, value: str):
+        normalized = str(value or "monthly").strip().lower()
+        if normalized not in REVIEW_TYPES:
+            raise ValueError("Review type must be monthly, quarterly, half_yearly, or annual")
+        return normalized
 
 
 class CycleUpdate(BaseModel):
@@ -142,7 +156,7 @@ class ResponseIn(BaseModel):
 
 class ResetIn(BaseModel):
     confirm: str
-    mode: str = "transactional"  # "transactional" or "full"
+    mode: str = "transactional"
 
 
 class ImportEmployeesResult(BaseModel):

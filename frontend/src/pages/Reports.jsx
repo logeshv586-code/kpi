@@ -1,135 +1,84 @@
-import {useEffect, useMemo, useState} from 'react'
-import {Award, BarChart2, CalendarRange, Download, TrendingUp, Users} from 'lucide-react'
-import {api, getError} from '../lib/api'
+import {useEffect,useMemo,useState} from 'react'
+import {Award,BarChart2,CheckCircle2,Clock3,Download,TrendingUp,UserCheck,Users} from 'lucide-react'
+import {api,getError} from '../lib/api'
 import {useAuth} from '../lib/auth'
-import {Card, ErrorBox, Loader, Modal, PageHeader, Score} from '../components/UI'
+import {Card,ErrorBox,Loader,PageHeader,Score} from '../components/UI'
 
-const monthOrder={Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11}
-
-function getRatingBand(score){
-  if(score>=90)return'Outstanding'
-  if(score>=80)return'Very Good'
-  if(score>=70)return'Good'
-  if(score>=60)return'Needs Improvement'
-  return'Improvement Required'
-}
-function roundOne(value){return Math.round(Number(value||0)*10)/10}
-function monthKey(label){
-  const [mon,year]=String(label||'').trim().split(/\s+/)
-  return Number(year||0)*12+(monthOrder[mon]??0)
-}
+const typeLabel={monthly:'Monthly',quarterly:'Quarterly',half_yearly:'Half-Yearly',annual:'Annual'}
+const typeOrder={monthly:0,quarterly:1,half_yearly:2,annual:3}
+function getRatingBand(score){if(score>=90)return'Outstanding';if(score>=80)return'Very Good';if(score>=70)return'Good';if(score>=60)return'Needs Improvement';return'Improvement Required'}
+const whole=value=>Math.round(Number(value||0))
 
 export default function Reports(){
   const{user}=useAuth()
-  const[data,setData]=useState(null)
-  const[department,setDepartment]=useState('All')
-  const[fromMonth,setFromMonth]=useState('')
-  const[toMonth,setToMonth]=useState('')
-  const[draftFrom,setDraftFrom]=useState('')
-  const[draftTo,setDraftTo]=useState('')
-  const[showRangeModal,setShowRangeModal]=useState(false)
-  const[error,setError]=useState('')
-  const[rangeErrors,setRangeErrors]=useState({})
+  const[data,setData]=useState(null),[pending,setPending]=useState(null)
+  const[reviewType,setReviewType]=useState('monthly'),[financialYear,setFinancialYear]=useState(''),[periodKey,setPeriodKey]=useState('all'),[department,setDepartment]=useState('All'),[error,setError]=useState('')
 
-  const title=['superadmin','hr'].includes(user?.role)?'Performance Reports':user?.role==='manager'?'Team Performance Reports':'My Performance Report'
-  const subtitle='Choose a From month and To month to view performance only for that selected period.'
+  const isOrgAdmin=['superadmin','hr'].includes(user?.role)
+  const title=isOrgAdmin?'Performance Reports':(user?.role==='manager'||user?.is_reporting_manager)?'Team Performance Reports':'My Performance Report'
+  const subtitle='View whole-number KPI results by Monthly, Quarterly, Half-Yearly or Annual financial-year review.'
 
-  useEffect(()=>{api.get('/dashboard/monthly-matrix').then(r=>setData(r.data)).catch(e=>setError(getError(e)))},[])
+  useEffect(()=>{Promise.all([api.get('/dashboard/review-matrix'),api.get('/kpi/pending-summary')]).then(([matrix,status])=>{setData(matrix.data);setPending(status.data)}).catch(e=>setError(getError(e)))},[])
 
-  const availableMonths=useMemo(()=>[...(data?.months||[])].sort((a,b)=>monthKey(a)-monthKey(b)),[data])
-  const hasAvailableMonths=availableMonths.length>0
+  const periods=useMemo(()=>[...(data?.periods||[])].sort((a,b)=>String(a.month).localeCompare(String(b.month))||(typeOrder[a.review_type]??99)-(typeOrder[b.review_type]??99)),[data])
+  const financialYears=useMemo(()=>[...new Set(periods.map(p=>p.financial_year).filter(Boolean))].sort().reverse(),[periods])
+  useEffect(()=>{if(!financialYear&&financialYears.length)setFinancialYear(financialYears[0])},[financialYears,financialYear])
+  const availableTypes=useMemo(()=>[...new Set(periods.filter(p=>!financialYear||p.financial_year===financialYear).map(p=>p.review_type))].sort((a,b)=>(typeOrder[a]??99)-(typeOrder[b]??99)),[periods,financialYear])
+  useEffect(()=>{if(availableTypes.length&&!availableTypes.includes(reviewType)){setReviewType(availableTypes[0]);setPeriodKey('all')}},[availableTypes,reviewType])
+  const filteredPeriods=useMemo(()=>periods.filter(p=>p.review_type===reviewType&&(!financialYear||p.financial_year===financialYear)),[periods,reviewType,financialYear])
+  useEffect(()=>{if(periodKey!=='all'&&!filteredPeriods.some(p=>p.key===periodKey))setPeriodKey('all')},[filteredPeriods,periodKey])
+  const selectedPeriods=useMemo(()=>periodKey==='all'?filteredPeriods:filteredPeriods.filter(p=>p.key===periodKey),[filteredPeriods,periodKey])
+  const selectedKeys=useMemo(()=>new Set(selectedPeriods.map(p=>p.key)),[selectedPeriods])
+  const selectedPeriodLabel=periodKey==='all'?`All ${typeLabel[reviewType]||reviewType} · ${financialYear||'All FY'}`:(selectedPeriods[0]?.label||'Selected period')
   const departments=useMemo(()=>['All',...new Set((data?.rows||[]).map(r=>r.department).filter(Boolean))].sort((a,b)=>a==='All'?-1:b==='All'?1:a.localeCompare(b)),[data])
 
-
-  useEffect(()=>{
-    if(!availableMonths.length)return
-    setFromMonth(current=>current&&availableMonths.includes(current)?current:availableMonths[0])
-    setToMonth(current=>current&&availableMonths.includes(current)?current:availableMonths[availableMonths.length-1])
-  },[availableMonths])
-
-  const selectedMonths=useMemo(()=>{
-    if(!fromMonth||!toMonth)return[]
-    const start=monthKey(fromMonth),end=monthKey(toMonth)
-    return availableMonths.filter(m=>monthKey(m)>=Math.min(start,end)&&monthKey(m)<=Math.max(start,end))
-  },[availableMonths,fromMonth,toMonth])
-
-  const rangeLabel=fromMonth&&toMonth?`${fromMonth} → ${toMonth}`:'Select report range'
-
   const rows=useMemo(()=>{
-    return(data?.rows||[])
-      .filter(r=>department==='All'||r.department===department)
-      .map(r=>{
-        const values=selectedMonths.map(m=>r.scores?.[m]).filter(v=>v!==null&&v!==undefined&&v!=='').map(Number).filter(Number.isFinite)
-        const score=values.length?roundOne(values.reduce((s,v)=>s+v,0)/values.length):null
-        const empValues=selectedMonths.map(m=>r.employee_scores?.[m]).filter(v=>v!==null&&v!==undefined&&v!=='').map(Number).filter(Number.isFinite)
-        const empScore=empValues.length?roundOne(empValues.reduce((s,v)=>s+v,0)/empValues.length):null
-        const mgrValues=selectedMonths.map(m=>r.manager_scores?.[m]).filter(v=>v!==null&&v!==undefined&&v!=='').map(Number).filter(Number.isFinite)
-        const mgrScore=mgrValues.length?roundOne(mgrValues.reduce((s,v)=>s+v,0)/mgrValues.length):null
-        return{...r,display_score:score,display_emp_score:empScore,display_mgr_score:mgrScore,display_band:score!=null?getRatingBand(score):'Not Evaluated'}
-      })
-  },[data,department,selectedMonths])
+    return(data?.rows||[]).filter(r=>department==='All'||r.department===department).map(r=>{
+      const values=Object.entries(r.scores||{}).filter(([key,value])=>selectedKeys.has(key)&&value!==null&&value!==undefined).map(([,value])=>Number(value)).filter(Number.isFinite)
+      const empValues=Object.entries(r.employee_scores||{}).filter(([key,value])=>selectedKeys.has(key)&&value!==null&&value!==undefined).map(([,value])=>Number(value)).filter(Number.isFinite)
+      const mgrValues=Object.entries(r.manager_scores||{}).filter(([key,value])=>selectedKeys.has(key)&&value!==null&&value!==undefined).map(([,value])=>Number(value)).filter(Number.isFinite)
+      const score=values.length?whole(values.reduce((s,v)=>s+v,0)/values.length):null
+      const empScore=empValues.length?whole(empValues.reduce((s,v)=>s+v,0)/empValues.length):null
+      const mgrScore=mgrValues.length?whole(mgrValues.reduce((s,v)=>s+v,0)/mgrValues.length):null
+      return{...r,display_score:score,display_emp_score:empScore,display_mgr_score:mgrScore,display_band:score!=null?getRatingBand(score):'Not Evaluated'}
+    }).filter(r=>r.display_score!==null||r.display_emp_score!==null||r.display_mgr_score!==null)
+  },[data,department,selectedKeys])
 
   const metrics=useMemo(()=>{
     const valid=rows.filter(r=>r.display_score!=null)
     if(!valid.length)return{avg:0,highCount:0,total:0,topDepartment:'N/A'}
-    const avg=roundOne(valid.reduce((s,r)=>s+Number(r.display_score),0)/valid.length)
-    const highCount=valid.filter(r=>Number(r.display_score)>=90).length
-    const grouped={}
+    const avg=whole(valid.reduce((s,r)=>s+Number(r.display_score),0)/valid.length),highCount=valid.filter(r=>Number(r.display_score)>=90).length,grouped={}
     valid.forEach(r=>{if(!r.department)return;if(!grouped[r.department])grouped[r.department]={total:0,count:0};grouped[r.department].total+=Number(r.display_score);grouped[r.department].count+=1})
-    let topDepartment='N/A',top=-1
-    Object.entries(grouped).forEach(([name,v])=>{const score=v.total/v.count;if(score>top){top=score;topDepartment=name}})
+    let topDepartment='N/A',top=-1;Object.entries(grouped).forEach(([name,value])=>{const score=value.total/value.count;if(score>top){top=score;topDepartment=name}})
     return{avg,highCount,total:valid.length,topDepartment}
   },[rows])
 
-  function openRange(){
-    if(!hasAvailableMonths){setError('No report months are available yet. Create KPI cycles or performance data first.');return}
-    setError('');setDraftFrom(fromMonth);setDraftTo(toMonth);setShowRangeModal(true)
-  }
-  function applyRange(){
-    const errors={}
-    if(!draftFrom)errors.from='Select a From month.'
-    if(!draftTo)errors.to='Select a To month.'
-    if(Object.keys(errors).length){setRangeErrors(errors);setError('Complete the required fields highlighted in red.');return}
-    if(monthKey(draftFrom)>monthKey(draftTo)){setError('From month must be before or the same as To month.');return}
-    setError('');setRangeErrors({});setFromMonth(draftFrom);setToMonth(draftTo);setShowRangeModal(false)
-  }
-
   function exportCsv(){
     if(!rows.length)return
-    const isSuperAdmin = user?.role === 'superadmin';
-    const head = isSuperAdmin 
-      ? ['Employee','Email','From Month','To Month','Department','Designation','Manager Score','Rating Band']
-      : ['Employee','Email','From Month','To Month','Department','Designation','Employee Score','Manager Score','Final Score','Rating Band']
-    const lines=[head.join(','),...rows.map(r=>{
-      const base = [r.employee,r.email||'',fromMonth,toMonth,r.department||'',r.designation||'']
-      const scores = isSuperAdmin 
-        ? [r.display_mgr_score??'N/A',r.display_band]
-        : [r.display_emp_score??'N/A',r.display_mgr_score??'N/A',r.display_score??'N/A',r.display_band]
-      return [...base, ...scores].map(x=>`"${String(x).replaceAll('"','""')}"`).join(',')
-    })]
-    const blob=new Blob([lines.join('\n')],{type:'text/csv'}),url=URL.createObjectURL(blob),a=document.createElement('a')
-    a.href=url;a.download=`kpi-report-${fromMonth}-to-${toMonth}`.toLowerCase().replace(/\s+/g,'-')+'.csv';a.click();URL.revokeObjectURL(url)
+    const head=['Employee','Email','Financial Year','Review Type','Period','Department','Designation','Reports To','Employee Score','Manager Score','Final Score','Rating Band']
+    const lines=[head.join(','),...rows.map(r=>[r.employee,r.email||'',financialYear,typeLabel[reviewType]||reviewType,selectedPeriodLabel,r.department||'',r.designation||'',r.manager||'',r.display_emp_score??'N/A',r.display_mgr_score??'N/A',r.display_score??'N/A',r.display_band].map(x=>`"${String(x).replaceAll('"','""')}"`).join(','))]
+    const blob=new Blob([lines.join('\n')],{type:'text/csv'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`kpi-${reviewType}-${financialYear||'report'}`.toLowerCase().replace(/\s+/g,'-')+'.csv';a.click();URL.revokeObjectURL(url)
   }
   function bandClass(band){if(band==='Outstanding')return'status-finalized';if(band==='Very Good'||band==='Good')return'status-manager_reviewed';if(band==='Needs Improvement')return'status-submitted';return'status-draft'}
 
   return<>
-    <PageHeader title={title} subtitle={subtitle} actions={<div className="report-actions"><button className="secondary" type="button" onClick={openRange}><CalendarRange size={16}/>{rangeLabel}</button>{departments.length>2?<select value={department} onChange={e=>setDepartment(e.target.value)} aria-label="Department" style={{maxWidth:'200px'}}>{departments.map(d=><option key={d}>{d}</option>)}</select>:null}<button className="secondary" onClick={exportCsv}><Download size={16}/>Export CSV</button></div>}/>
+    <PageHeader title={title} subtitle={subtitle} actions={<div className="report-actions responsive-actions"><select value={financialYear} onChange={e=>{setFinancialYear(e.target.value);setPeriodKey('all')}} aria-label="Financial year">{financialYears.map(fy=><option key={fy} value={fy}>{fy}</option>)}</select><select value={reviewType} onChange={e=>{setReviewType(e.target.value);setPeriodKey('all')}} aria-label="Review type">{availableTypes.map(type=><option key={type} value={type}>{typeLabel[type]||type}</option>)}</select><select value={periodKey} onChange={e=>setPeriodKey(e.target.value)} aria-label="Review period"><option value="all">All periods</option>{filteredPeriods.map(p=><option key={p.key} value={p.key}>{p.label}</option>)}</select>{departments.length>2?<select value={department} onChange={e=>setDepartment(e.target.value)} aria-label="Department"><option value="All">All departments</option>{departments.filter(d=>d!=='All').map(d=><option key={d}>{d}</option>)}</select>:null}<button className="secondary" onClick={exportCsv}><Download size={16}/>Export CSV</button></div>}/>
     <ErrorBox error={error}/>
     {!data?<Loader/>:<>
-      <div className="helper-strip" style={{marginBottom:'14px'}}><strong>Report period:</strong> {rangeLabel} · {selectedMonths.length} month{selectedMonths.length===1?'':'s'} included.</div>
+      <div className="helper-strip" style={{marginBottom:'14px'}}><strong>Report:</strong> {selectedPeriodLabel} · April–March financial year · scores rounded to whole integers.</div>
+      {pending?<div className="metric-grid compact pending-metrics" style={{marginBottom:'16px'}}>
+        <Card><div className="metric-label"><Clock3 size={16}/><span>Staff Pending</span></div><strong className="small-metric">{pending.pending_staff||0}</strong><div className="cell-help">Not started / draft</div></Card>
+        <Card><div className="metric-label"><UserCheck size={16}/><span>Manager Review Pending</span></div><strong className="small-metric">{pending.pending_manager_review||0}</strong><div className="cell-help">Staff submitted</div></Card>
+        <Card><div className="metric-label"><CheckCircle2 size={16}/><span>Ready for HR</span></div><strong className="small-metric">{pending.ready_for_hr||0}</strong><div className="cell-help">Manager reviewed</div></Card>
+        <Card><div className="metric-label"><CheckCircle2 size={16}/><span>Finalized</span></div><strong className="small-metric">{pending.finalized||0}</strong><div className="cell-help">HR completed</div></Card>
+      </div>:null}
       <div className="metric-grid compact" style={{marginBottom:'16px'}}>
-        <Card><div style={{display:'flex',alignItems:'center',gap:'8px',color:'#64748b'}}><BarChart2 size={16}/><span>Average Score</span></div><strong className="small-metric">{metrics.avg}</strong></Card>
-        <Card><div style={{display:'flex',alignItems:'center',gap:'8px',color:'#64748b'}}><Award size={16}/><span>High Performers (≥90)</span></div><strong className="small-metric">{metrics.highCount}</strong></Card>
-        <Card><div style={{display:'flex',alignItems:'center',gap:'8px',color:'#64748b'}}><Users size={16}/><span>Evaluated Records</span></div><strong className="small-metric">{metrics.total}</strong></Card>
-        <Card><div style={{display:'flex',alignItems:'center',gap:'8px',color:'#64748b'}}><TrendingUp size={16}/><span>Top Department</span></div><strong className="small-metric" style={{fontSize:'1rem'}}>{metrics.topDepartment}</strong></Card>
+        <Card><div className="metric-label"><BarChart2 size={16}/><span>Average Score</span></div><strong className="small-metric">{metrics.avg}</strong></Card>
+        <Card><div className="metric-label"><Award size={16}/><span>High Performers (≥90)</span></div><strong className="small-metric">{metrics.highCount}</strong></Card>
+        <Card><div className="metric-label"><Users size={16}/><span>Evaluated Records</span></div><strong className="small-metric">{metrics.total}</strong></Card>
+        <Card><div className="metric-label"><TrendingUp size={16}/><span>Top Department</span></div><strong className="small-metric compact-name">{metrics.topDepartment}</strong></Card>
       </div>
-      <Card><div style={{fontSize:'0.9rem',fontWeight:700,color:'#1e293b',marginBottom:'14px'}}>Performance Matrix: <span style={{color:'#2563eb'}}>{rangeLabel}</span></div><div className="table-wrap"><table><thead><tr><th>Employee</th><th>Department</th><th>Designation</th><th>Report Period</th>{user?.role!=='superadmin'&&<th>Employee Score</th>}<th>Manager Score</th>{user?.role!=='superadmin'&&<th>Final Score</th>}<th>Rating Band</th></tr></thead><tbody>{rows.map(r=><tr key={r.user_id}><td><strong>{r.employee}</strong><div className="cell-help">{r.email}</div></td><td>{r.department||'—'}</td><td>{r.designation||'—'}</td><td>{rangeLabel}</td>{user?.role!=='superadmin'&&<td>{r.display_emp_score!=null?<Score value={r.display_emp_score}/>:<span className="muted">N/A</span>}</td>}<td>{r.display_mgr_score!=null?<Score value={r.display_mgr_score}/>:<span className="muted">N/A</span>}</td>{user?.role!=='superadmin'&&<td>{r.display_score!=null?<Score value={r.display_score}/>:<span className="muted">N/A</span>}</td>}<td><span className={`status-badge ${bandClass(r.display_band)}`}>{r.display_band}</span></td></tr>)}</tbody></table></div>{!rows.length?<div className="empty">No performance data found for this department and period.</div>:null}</Card>
+      <Card><div className="report-table-title">Performance Matrix: <span>{selectedPeriodLabel}</span></div><div className="table-wrap"><table className="responsive-data-table"><thead><tr><th>Employee</th><th>Department</th><th>Designation</th><th>Reports To</th><th>Employee Score</th><th>Manager Score</th><th>Final Score</th><th>Rating Band</th></tr></thead><tbody>{rows.map(r=><tr key={r.user_id}><td data-label="Employee"><strong>{r.employee}</strong><div className="cell-help">{r.email}</div></td><td data-label="Department">{r.department||'—'}</td><td data-label="Designation">{r.designation||'—'}</td><td data-label="Reports To">{r.manager||'—'}</td><td data-label="Employee Score">{r.display_emp_score!=null?<Score value={r.display_emp_score}/>:<span className="muted">N/A</span>}</td><td data-label="Manager Score">{r.display_mgr_score!=null?<Score value={r.display_mgr_score}/>:<span className="muted">N/A</span>}</td><td data-label="Final Score">{r.display_score!=null?<Score value={r.display_score}/>:<span className="muted">N/A</span>}</td><td data-label="Rating"><span className={`status-badge ${bandClass(r.display_band)}`}>{r.display_band}</span></td></tr>)}</tbody></table></div>{!rows.length?<div className="empty">No performance data found for this review period.</div>:null}</Card>
     </>}
-
-    {showRangeModal?<Modal title="Select report period" onClose={()=>setShowRangeModal(false)} actions={<><button className="secondary" onClick={()=>setShowRangeModal(false)}>Cancel</button><button className="primary" onClick={applyRange}>Apply From / To</button></>}>
-      <div className="helper-strip" style={{margin:'0 0 16px'}}>Choose the first month and last month. Every available month between them will be included in the report.</div>
-      <div className="form-grid report-range-fields"><label>From month <span className="required-mark">*</span><select className={rangeErrors.from?'field-invalid':''} aria-invalid={Boolean(rangeErrors.from)} value={draftFrom} onChange={e=>{const value=e.target.value;setDraftFrom(value);setRangeErrors(x=>({...x,from:''}));if(draftTo&&monthKey(value)>monthKey(draftTo))setDraftTo(value)}}><option value="" disabled>Select first month</option>{availableMonths.map(m=><option key={m} value={m}>{m}</option>)}</select>{rangeErrors.from?<span className="field-error">{rangeErrors.from}</span>:null}</label><label>To month <span className="required-mark">*</span><select className={rangeErrors.to?'field-invalid':''} aria-invalid={Boolean(rangeErrors.to)} value={draftTo} onChange={e=>{setDraftTo(e.target.value);setRangeErrors(x=>({...x,to:''}))}}><option value="" disabled>Select last month</option>{availableMonths.filter(m=>!draftFrom||monthKey(m)>=monthKey(draftFrom)).map(m=><option key={m} value={m}>{m}</option>)}</select>{rangeErrors.to?<span className="field-error">{rangeErrors.to}</span>:null}</label></div>
-      {draftFrom&&draftTo?<div className="helper-strip" style={{marginTop:'14px'}}><strong>Selected:</strong> {draftFrom} → {draftTo}</div>:null}
-    </Modal>:null}
   </>
 }

@@ -1,5 +1,5 @@
 import {NavLink, useNavigate} from 'react-router-dom'
-import {BarChart3, FileInput, FileSpreadsheet, HelpCircle, KeyRound, LogOut, Settings as SettingsIcon, Users, Menu, X} from 'lucide-react'
+import {BarChart3, FileInput, FileSpreadsheet, HelpCircle, KeyRound, LogOut, Network, Settings as SettingsIcon, Users, Menu} from 'lucide-react'
 import {canAccessTab, useAuth} from '../lib/auth'
 import {useState} from 'react'
 import {api, getError} from '../lib/api'
@@ -8,6 +8,7 @@ import {ErrorBox, Modal} from './UI'
 const coreNavigation = [
   ['/reports', BarChart3, 'Reports'],
   ['/employees', Users, 'Employees Directory'],
+  ['/hierarchy', Network, 'Team Hierarchy'],
   ['/templates', FileSpreadsheet, 'KPI Templates'],
   ['/kpi-input', FileInput, 'KPI Input'],
   ['/settings', SettingsIcon, 'Settings & Reset Data']
@@ -97,7 +98,7 @@ export default function Layout({children}) {
             <button className="hamburger" onClick={() => setMobileMenuOpen(!mobileMenuOpen)}>
               <Menu size={20}/>
             </button>
-            <div className="crumb">Monthly KPI Performance Management</div>
+            <div className="crumb">KPI Performance Management</div>
           </div>
           <div className="top-context">
             <span>{user?.department || 'Eagle Software'}</span>

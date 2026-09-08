@@ -31,9 +31,15 @@ def ensure_schema_upgrades():
                 conn.execute(text("CREATE INDEX ix_kpi_responses_evidence_file_id ON kpi_responses (evidence_file_id)"))
     if "kpi_cycles" in tables:
         columns = {c["name"] for c in inspector.get_columns("kpi_cycles")}
-        if "is_locked" not in columns:
-            with engine.begin() as conn:
+        with engine.begin() as conn:
+            if "is_locked" not in columns:
                 conn.execute(text("ALTER TABLE kpi_cycles ADD COLUMN is_locked BOOLEAN DEFAULT FALSE"))
+            if "review_type" not in columns:
+                conn.execute(text("ALTER TABLE kpi_cycles ADD COLUMN review_type VARCHAR(24) DEFAULT 'monthly' NOT NULL"))
+            if "financial_year" not in columns:
+                conn.execute(text("ALTER TABLE kpi_cycles ADD COLUMN financial_year VARCHAR(16)"))
+            if "period_label" not in columns:
+                conn.execute(text("ALTER TABLE kpi_cycles ADD COLUMN period_label VARCHAR(80)"))
     if "kpi_templates" in tables:
         columns = {c["name"] for c in inspector.get_columns("kpi_templates")}
         with engine.begin() as conn:

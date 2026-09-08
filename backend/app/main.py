@@ -8,13 +8,14 @@ from .database import Base, engine
 from .file_storage import SAMPLE_DIR, UPLOAD_DIR
 from .migrations import ensure_schema_upgrades
 from .routers import admin_router, auth_router, dashboard_router, employee_import_v2, file_router, kpi_router, kpi_submit_override
+from .routers.kpi_v2_enhancements import start_notification_scheduler
 from .sample_files import ensure_samples
 
 Base.metadata.create_all(bind=engine)
 ensure_schema_upgrades()
 ensure_samples()
 
-app = FastAPI(title="KPI Performance Management API", version="1.2.2")
+app = FastAPI(title="KPI Performance Management API", version="1.3.0")
 
 
 class PrivateNetworkAccessMiddleware(BaseHTTPMiddleware):
@@ -49,6 +50,11 @@ app.include_router(dashboard_router.router)
 app.include_router(file_router.router)
 
 
+@app.on_event("startup")
+def start_kpi_notifications():
+    start_notification_scheduler()
+
+
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "version": "1.2.2"}
+    return {"status": "ok", "version": "1.3.0"}

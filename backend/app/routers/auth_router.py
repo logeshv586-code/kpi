@@ -40,10 +40,11 @@ def user_payload(user: User, db: Session | None = None):
         "department": department.name if department else None,
         "division": division.name if division else None,
         "permissions": user_permissions(user),
-        # A person does not need the stored System Role "Manager" to review
-        # direct reports. The Reports To relationship grants this capability.
+        # Reports To is the source of truth. A reporting manager can view the
+        # full descendant tree, while review authority remains with each
+        # employee's immediate reporting manager.
         "is_reporting_manager": is_reporting_manager,
-        "review_scope": "all" if user.role.value in {"superadmin", "hr"} else ("direct_reports" if is_reporting_manager else "self"),
+        "review_scope": "organization" if user.role.value in {"superadmin", "hr"} else ("descendants" if is_reporting_manager else "self"),
     }
 
 
