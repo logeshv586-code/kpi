@@ -43,7 +43,7 @@ function Protected() {
     <Route path="cycles" element={<RoleGate roles={['superadmin','hr']}><Cycles/></RoleGate>}/>
     <Route path="assignments" element={<RoleGate roles={['superadmin','hr']}><Assignments/></RoleGate>}/>
     <Route path="employees" element={<TabGate tab="employees"><Employees/></TabGate>}/>
-    <Route path="hierarchy" element={<Navigate to="/templates" replace/>}/>
+    <Route path="hierarchy" element={<TabGate tab="hierarchy"><Hierarchy/></TabGate>}/>
     <Route path="reports" element={<Reports/>}/>
     <Route path="masters" element={<RoleGate roles={['superadmin','hr']}><Masters/></RoleGate>}/>
     <Route path="audit" element={<RoleGate roles={['superadmin','hr']}><Audit/></RoleGate>}/>
