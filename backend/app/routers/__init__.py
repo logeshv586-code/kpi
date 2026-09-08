@@ -5,5 +5,8 @@ from . import relationship_review_override  # noqa: F401
 # Apply the final review-state rule after the relationship override: once a
 # reporting person submits Manager Review, only Super Admin may change it.
 from . import manager_review_lock_override  # noqa: F401
+# Apply the KPI v2 business rules last: recursive hierarchy visibility,
+# financial-year review periods, subordinate score cap and pending reminders.
+from . import kpi_v2_enhancements  # noqa: F401
 
 __all__ = ["admin_router", "auth_router", "dashboard_router", "file_router", "kpi_router"]
