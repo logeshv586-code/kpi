@@ -37,10 +37,12 @@ export default function Reports(){
       const values=Object.entries(r.scores||{}).filter(([key,value])=>selectedKeys.has(key)&&value!==null&&value!==undefined).map(([,value])=>Number(value)).filter(Number.isFinite)
       const empValues=Object.entries(r.employee_scores||{}).filter(([key,value])=>selectedKeys.has(key)&&value!==null&&value!==undefined).map(([,value])=>Number(value)).filter(Number.isFinite)
       const mgrValues=Object.entries(r.manager_scores||{}).filter(([key,value])=>selectedKeys.has(key)&&value!==null&&value!==undefined).map(([,value])=>Number(value)).filter(Number.isFinite)
+      const thresholdIssues=Object.entries(r.threshold_failures||{}).filter(([key])=>selectedKeys.has(key)).flatMap(([,issues])=>issues||[])
       const score=values.length?whole(values.reduce((s,v)=>s+v,0)/values.length):null
       const empScore=empValues.length?whole(empValues.reduce((s,v)=>s+v,0)/empValues.length):null
       const mgrScore=mgrValues.length?whole(mgrValues.reduce((s,v)=>s+v,0)/mgrValues.length):null
-      return{...r,display_score:score,display_emp_score:empScore,display_mgr_score:mgrScore,display_band:score!=null?getRatingBand(score):'Not Evaluated'}
+      const ratingBand=score!=null?getRatingBand(score):'Not Evaluated'
+      return{...r,display_score:score,display_emp_score:empScore,display_mgr_score:mgrScore,display_band:ratingBand,display_rating:thresholdIssues.length?`${ratingBand} - ${thresholdIssues.join(' | ')}`:ratingBand,threshold_issues:thresholdIssues}
     }).filter(r=>r.display_score!==null||r.display_emp_score!==null||r.display_mgr_score!==null)
   },[data,department,selectedKeys])
 
@@ -55,8 +57,8 @@ export default function Reports(){
 
   function exportCsv(){
     if(!rows.length)return
-    const head=['Employee','Email','Financial Year','Review Type','Period','Department','Designation','Reports To','Employee Score','Manager Score','Final Score','Rating Band']
-    const lines=[head.join(','),...rows.map(r=>[r.employee,r.email||'',financialYear,typeLabel[reviewType]||reviewType,selectedPeriodLabel,r.department||'',r.designation||'',r.manager||'',r.display_emp_score??'N/A',r.display_mgr_score??'N/A',r.display_score??'N/A',r.display_band].map(x=>`"${String(x).replaceAll('"','""')}"`).join(','))]
+    const head=['Employee','Email','Financial Year','Review Type','Period','Department','Designation','Reports To','Employee Score','Manager Score','Final Score','Rating Band','Threshold Issues']
+    const lines=[head.join(','),...rows.map(r=>[r.employee,r.email||'',financialYear,typeLabel[reviewType]||reviewType,selectedPeriodLabel,r.department||'',r.designation||'',r.manager||'',r.display_emp_score??'N/A',r.display_mgr_score??'N/A',r.display_score??'N/A',r.display_rating,r.threshold_issues.join(' | ')||'None'].map(x=>`"${String(x).replaceAll('"','""')}"`).join(','))]
     const blob=new Blob([lines.join('\n')],{type:'text/csv'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`kpi-${reviewType}-${financialYear||'report'}`.toLowerCase().replace(/\s+/g,'-')+'.csv';a.click();URL.revokeObjectURL(url)
   }
   function bandClass(band){if(band==='Outstanding')return'status-finalized';if(band==='Very Good'||band==='Good')return'status-manager_reviewed';if(band==='Needs Improvement')return'status-submitted';return'status-draft'}
@@ -78,7 +80,7 @@ export default function Reports(){
         <Card><div className="metric-label"><Users size={16}/><span>Evaluated Records</span></div><strong className="small-metric">{metrics.total}</strong></Card>
         <Card><div className="metric-label"><TrendingUp size={16}/><span>Top Department</span></div><strong className="small-metric compact-name">{metrics.topDepartment}</strong></Card>
       </div>
-      <Card><div className="report-table-title">Performance Matrix: <span>{selectedPeriodLabel}</span></div><div className="table-wrap"><table className="responsive-data-table"><thead><tr><th>Employee</th><th>Department</th><th>Designation</th><th>Reports To</th><th>Employee Score</th><th>Manager Score</th><th>Final Score</th><th>Rating Band</th></tr></thead><tbody>{rows.map(r=><tr key={r.user_id}><td data-label="Employee"><strong>{r.employee}</strong><div className="cell-help">{r.email}</div></td><td data-label="Department">{r.department||'—'}</td><td data-label="Designation">{r.designation||'—'}</td><td data-label="Reports To">{r.manager||'—'}</td><td data-label="Employee Score">{r.display_emp_score!=null?<Score value={r.display_emp_score}/>:<span className="muted">N/A</span>}</td><td data-label="Manager Score">{r.display_mgr_score!=null?<Score value={r.display_mgr_score}/>:<span className="muted">N/A</span>}</td><td data-label="Final Score">{r.display_score!=null?<Score value={r.display_score}/>:<span className="muted">N/A</span>}</td><td data-label="Rating"><span className={`status-badge ${bandClass(r.display_band)}`}>{r.display_band}</span></td></tr>)}</tbody></table></div>{!rows.length?<div className="empty">No performance data found for this review period.</div>:null}</Card>
+      <Card><div className="report-table-title">Performance Matrix: <span>{selectedPeriodLabel}</span></div><div className="table-wrap"><table className="responsive-data-table"><thead><tr><th>Employee</th><th>Department</th><th>Designation</th><th>Reports To</th><th>Employee Score</th><th>Manager Score</th><th>Final Score</th><th>Rating Band</th><th>Threshold Issues</th></tr></thead><tbody>{rows.map(r=><tr key={r.user_id}><td data-label="Employee"><strong>{r.employee}</strong><div className="cell-help">{r.email}</div></td><td data-label="Department">{r.department||'—'}</td><td data-label="Designation">{r.designation||'—'}</td><td data-label="Reports To">{r.manager||'—'}</td><td data-label="Employee Score">{r.display_emp_score!=null?<Score value={r.display_emp_score}/>:<span className="muted">N/A</span>}</td><td data-label="Manager Score">{r.display_mgr_score!=null?<Score value={r.display_mgr_score}/>:<span className="muted">N/A</span>}</td><td data-label="Final Score">{r.display_score!=null?<Score value={r.display_score}/>:<span className="muted">N/A</span>}</td><td data-label="Rating"><span className={`status-badge ${bandClass(r.display_band)}`}>{r.display_rating}</span></td><td data-label="Threshold Issues">{r.threshold_issues.length?<div className="stack-tight">{r.threshold_issues.map((issue,index)=><div key={index} className="threshold-not-achieved">{issue}</div>)}</div>:<span className="muted">None</span>}</td></tr>)}</tbody></table></div>{!rows.length?<div className="empty">No performance data found for this review period.</div>:null}</Card>
     </>}
   </>
 }

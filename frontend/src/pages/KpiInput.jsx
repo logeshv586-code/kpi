@@ -42,8 +42,8 @@ function parseAssignmentYearMonth(a) {
 function Input({item,value,onChange,disabled}){
   const r=value||{},cfg=item.config||{},map=cfg.score_map||{}
   if(['choice','yesno'].includes(item.input_type)) return <select disabled={disabled} value={r.selected_option||''} onChange={e=>onChange({...r,selected_option:e.target.value})}><option value="">Select an answer...</option>{Object.keys(map).map(o=><option key={o} value={o}>{o} ({map[o]}%)</option>)}</select>
-  if(item.input_type==='rating') return <input disabled={disabled} type="number" min="1" max={cfg.max_rating||5} value={r.actual_numeric??''} onChange={e=>onChange({...r,actual_numeric:e.target.value===''?null:Number(e.target.value)})}/>
-  return <input disabled={disabled} type="number" step="0.01" value={r.actual_numeric??''} onChange={e=>onChange({...r,actual_numeric:e.target.value===''?null:Number(e.target.value)})} placeholder={item.target_value!=null?`Enter achievement (target ${item.target_value})`:'Enter actual achievement'}/>
+  if(item.input_type==='rating') return <input disabled={disabled} type="number" min="1" max={cfg.max_rating||5} step="1" value={r.actual_numeric==null?'':Math.round(Number(r.actual_numeric))} onChange={e=>onChange({...r,actual_numeric:e.target.value===''?null:Math.round(Number(e.target.value))})}/>
+  return <input disabled={disabled} type="number" step="1" value={r.actual_numeric==null?'':Math.round(Number(r.actual_numeric))} onChange={e=>onChange({...r,actual_numeric:e.target.value===''?null:Math.round(Number(e.target.value))})} placeholder={item.target_value!=null?`Enter achievement (target ${item.target_value})`:'Enter actual achievement'}/>
 }
 
 export default function KpiInput(){
@@ -381,7 +381,7 @@ export default function KpiInput(){
         <Card><span>Form completion</span><strong>{completion}%</strong><div className="bar"><i style={{width:`${completion}%`}}/></div></Card>
         <Card>
           <div style={{display:'flex',justify:'space-between',alignItems:'center'}}>
-            <div><span>Calculated score</span><strong>{Number(assignment.calculated_score||0).toFixed(1)}</strong><Status value={assignment.status}/></div>
+            <div><span>Calculated score</span><strong>{Math.round(Number(assignment.calculated_score||0))}</strong><Status value={assignment.status}/></div>
             <button className="secondary small icon-button" title="Download PDF Report Summary" onClick={downloadPdfReport} style={{borderRadius:'8px',padding:'6px'}}>
               <Download size={14}/>
             </button>
@@ -440,7 +440,7 @@ export default function KpiInput(){
                 <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:'4px'}}>
                   <div className="weight-chip">{kra.weight} marks weightage</div>
                   <div style={{fontSize:'0.85rem',fontWeight:700,color:'var(--color-primary,#2563eb)'}}>
-                    Section score: {kraScore.toFixed(1)} / {kra.weight} marks
+                    Section score: {Math.round(kraScore)} / {kra.weight} marks
                   </div>
                 </div>
               </div>
@@ -482,7 +482,7 @@ export default function KpiInput(){
                           <td><strong>{item.weight}</strong></td>
                           <td>
                             <strong style={{fontSize:'1.05rem',color:'var(--color-primary,#2563eb)'}}>
-                              {Number(item.response?.score||0).toFixed(1)}
+                              {Math.round(Number(item.response?.score||0))}
                             </strong>
                             <span style={{fontSize:'0.8rem',color:'var(--color-muted,#64748b)'}}> / {item.weight}</span>
                             <div className="cell-help">{Number(item.response?.achievement_pct||0).toFixed(0)}% score</div>

@@ -32,7 +32,7 @@ from ..models import (
     User,
 )
 from ..schemas import AssignmentIn, AutoAssignIn, CycleIn, CycleUpdate, ReopenIn, ResponseIn, ReviewIn, TemplateImportIn, TemplateIn
-from ..services import audit, calculate_achievement_percent, item_config, recalc_assignment, validate_template
+from ..services import audit, calculate_achievement_percent, item_config, recalc_assignment, threshold_status, validate_template
 
 router = APIRouter(prefix="/api/kpi", tags=["kpi"])
 admin_roles = require_roles(Role.superadmin)
@@ -835,12 +835,25 @@ def assignment_pdf(assignment_id: int, date_label: str | None = None, db: Sessio
                 manager_actual = r.manager_selected_option or ("—" if r.manager_actual_numeric is None else f"{r.manager_actual_numeric:g}")
                 remarks = r.remarks or ""
                 m_mark = r.manager_score or 0
+            threshold = threshold_status(item, r.actual_numeric if r else None)
+            target_parts = []
+            if item.target_value is not None:
+                target_parts.append(f"Target: {item.target_value:g}")
+            if threshold["minimum"] is not None:
+                target_parts.append(f"Minimum: {threshold['minimum']:g}")
+            if threshold["maximum"] is not None:
+                target_parts.append(f"Maximum: {threshold['maximum']:g}")
+            if threshold["passed"] is False:
+                target_parts.append(f"<b>{threshold['reason']}</b>")
+            elif threshold["passed"] is True and threshold["rule"] != "none":
+                target_parts.append("Threshold achieved")
+            target_cell = Paragraph("<br/>".join(target_parts) if target_parts else "—", styles["BodyText"])
             
             # If manager has not reviewed yet, show employee's mark as provisional
-            mark_display = f"{m_mark:.1f}" if a.manager_score is not None else f"{(r.score or 0):.1f}*"
+            mark_display = f"{m_mark:.1f}" if a.manager_score is not None else f"{(r.score if r else 0):.1f}*"
             data.append([
                 Paragraph(item.question, styles["BodyText"]), 
-                "—" if item.target_value is None else f"{item.target_value:g}", 
+                target_cell, 
                 actual, 
                 manager_actual, 
                 f"{item.weight:g}", 

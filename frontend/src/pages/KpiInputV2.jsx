@@ -23,9 +23,10 @@ function periodLabel(a){
 
 function thresholdInfo(item,value,prefix=''){
   if(!numericTypes.includes(item.input_type))return{configured:false,passed:null}
-  const meta=item.config?.meta||{},rule=meta.threshold_rule||'none'
+  const meta=item.config?.meta||{}
   const min=meta.threshold_min===null||meta.threshold_min===undefined||meta.threshold_min===''?null:Number(meta.threshold_min)
   const max=meta.threshold_max===null||meta.threshold_max===undefined||meta.threshold_max===''?null:Number(meta.threshold_max)
+  const rule=meta.threshold_rule&&meta.threshold_rule!=='none'?meta.threshold_rule:(min!==null&&max!==null?'range':min!==null?'minimum':max!==null?'maximum':'none')
   const raw=value?.[`${prefix}actual_numeric`]
   if(rule==='none'||(min===null&&max===null))return{configured:false,passed:null,rule,min,max}
   if(raw===null||raw===undefined||raw==='')return{configured:true,passed:null,rule,min,max}
@@ -70,27 +71,22 @@ function scoreItem(item,value,prefix=''){
 function numericProgress(item,value,prefix=''){
   if(!numericTypes.includes(item.input_type))return null
   const actualRaw=value?.[`${prefix}actual_numeric`],targetRaw=item.target_value
-  if(actualRaw===null||actualRaw===undefined||actualRaw===''||targetRaw===null||targetRaw===undefined)return null
-  const actual=Number(actualRaw),target=Number(targetRaw)
-  if(!Number.isFinite(actual)||!Number.isFinite(target))return null
+  if(actualRaw===null||actualRaw===undefined||actualRaw==='')return null
+  const actual=Number(actualRaw),target=targetRaw===null||targetRaw===undefined||targetRaw===''?null:Number(targetRaw)
+  if(!Number.isFinite(actual)||(target!==null&&!Number.isFinite(target)))return null
   const unit=item.config?.meta?.unit||(item.input_type==='percentage'?'%':'')
-  const rawAchievement=item.direction==='lower'?(actual<=0?100:(target<=0?(actual<=0?100:0):Math.min(100,target/actual*100))):(target>0?actual/target*100:(actual>=0?100:0))
-  return{actual,target,unit,rawAchievement:whole(Math.max(0,rawAchievement)),remaining:item.direction==='lower'?Math.max(actual-target,0):Math.max(target-actual,0)}
+  const rawAchievement=target===null?actual:(item.direction==='lower'?(actual<=0?100:(target<=0?(actual<=0?100:0):Math.min(100,target/actual*100))):(target>0?actual/target*100:(actual>=0?100:0)))
+  return{actual,target,unit,rawAchievement:whole(Math.max(0,rawAchievement)),remaining:target===null?0:item.direction==='lower'?Math.max(actual-target,0):Math.max(target-actual,0)}
 }
 
-function formatNumber(value){if(!Number.isFinite(Number(value)))return'—';return Number(value).toLocaleString(undefined,{maximumFractionDigits:2})}
+function formatNumber(value){if(!Number.isFinite(Number(value)))return'—';return Math.round(Number(value)).toLocaleString()}
 
 function thresholdLabel(item){
-  const meta=item.config?.meta||{},rule=meta.threshold_rule||'none',unit=meta.unit||'',suffix=unit?` ${unit}`:''
-  const min=meta.threshold_min,max=meta.threshold_max
-  if(rule==='minimum'&&min!==null&&min!==undefined)return`Minimum ${formatNumber(min)}${suffix}`
-  if(rule==='maximum'&&max!==null&&max!==undefined)return`Maximum ${formatNumber(max)}${suffix}`
-  if(rule==='range'){
-    if(min!==null&&min!==undefined&&max!==null&&max!==undefined)return`${formatNumber(min)}${suffix} – ${formatNumber(max)}${suffix}`
-    if(min!==null&&min!==undefined)return`Minimum ${formatNumber(min)}${suffix}`
-    if(max!==null&&max!==undefined)return`Maximum ${formatNumber(max)}${suffix}`
-  }
-  return null
+  const meta=item.config?.meta||{},unit=meta.unit||'',suffix=unit?` ${unit}`:''
+  const min=meta.threshold_min,max=meta.threshold_max,parts=[]
+  if(min!==null&&min!==undefined&&min!=='')parts.push(`Minimum ${formatNumber(min)}${suffix}`)
+  if(max!==null&&max!==undefined&&max!=='')parts.push(`Maximum ${formatNumber(max)}${suffix}`)
+  return parts.length?parts.join(' · '):null
 }
 
 function AnswerInput({item,value,onChange,disabled,prefix=''}){
@@ -99,7 +95,7 @@ function AnswerInput({item,value,onChange,disabled,prefix=''}){
     const options=Object.keys(cfg.score_map||{})
     return <select disabled={disabled} value={v[`${prefix}selected_option`]||''} onChange={e=>onChange({[`${prefix}selected_option`]:e.target.value})}><option value="">Select result...</option>{options.map(option=><option key={option} value={option}>{option}</option>)}</select>
   }
-  return <input disabled={disabled} type="number" min="0" step={item.input_type==='count'?'1':'0.01'} value={v[`${prefix}actual_numeric`]??''} onChange={e=>onChange({[`${prefix}actual_numeric`]:e.target.value===''?null:Number(e.target.value)})} placeholder={item.target_value!=null?`Enter achieved value (target ${item.target_value})`:'Enter achieved value'}/>
+  return <input disabled={disabled} type="number" min="0" step="1" value={v[`${prefix}actual_numeric`]==null?'':Math.round(Number(v[`${prefix}actual_numeric`]))} onChange={e=>onChange({[`${prefix}actual_numeric`]:e.target.value===''?null:Math.round(Number(e.target.value))})} placeholder={item.target_value!=null?`Enter achieved value (target ${item.target_value})`:'Enter achieved value'}/>
 }
 
 function ResultSummary({item,value,prefix=''}){
@@ -113,8 +109,7 @@ function ResultSummary({item,value,prefix=''}){
   if(!progress)return <div className="cell-help">Enter the achieved value. The system will calculate achievement and marks.</div>
   const suffix=progress.unit?` ${progress.unit}`:''
   return <div className="kpi-threshold-summary">
-    <div><strong>Achieved:</strong> {formatNumber(progress.actual)}{suffix} · <strong>Target:</strong> {formatNumber(progress.target)}{suffix}</div>
-    <div><strong>Achievement:</strong> {progress.rawAchievement}%</div>
+    <div><strong>Achieved:</strong> {formatNumber(progress.actual)}{suffix}{progress.target!==null?<> · <strong>Achievement:</strong> {progress.rawAchievement}%</>:null}</div>
     {threshold.configured?<div className={threshold.passed?'threshold-achieved':'threshold-not-achieved'}>{threshold.passed?'Achieved':`Not Achieved · ${threshold.reason} · 0 marks`}</div>:null}
   </div>
 }
@@ -202,11 +197,11 @@ export default function KpiInputV2(){
         const sectionScore=whole(kra.items.reduce((sum,item)=>sum+scoreItem(item,values[item.id]),0))
         return <Card key={kra.id}>
           <div className="kra-title"><div><h3>{kra.name}</h3><p>{kra.items.length} KPI parameters</p></div><div className="kra-score-summary"><div className="weight-chip">{kra.weight} marks weightage</div><div>Section score: {sectionScore} / {kra.weight}</div></div></div>
-          <div className="table-wrap"><table className="kpi-input-table"><thead><tr><th>KPI parameter & task</th><th>Target / threshold</th><th>Your achieved value</th><th>Manager achieved</th><th>Weight</th><th>Marks scored</th><th>Optional description & PDF</th></tr></thead><tbody>{kra.items.map(item=>{
+          <div className="table-wrap"><table className="kpi-input-table"><thead><tr><th>KPI parameter & task</th><th>Threshold criteria</th><th>Your achieved value</th><th>Manager achieved</th><th>Weight</th><th>Marks scored</th><th>Optional description & PDF</th></tr></thead><tbody>{kra.items.map(item=>{
             const v=values[item.id]||{},meta=item.config?.meta||{},mark=scoreItem(item,v),mMark=scoreItem(item,v,'manager_'),scoreMap=item.config?.score_map||{},unit=meta.unit||(item.input_type==='percentage'?'%':''),threshold=thresholdLabel(item)
             return <tr key={item.id}>
               <td><strong>{item.question}</strong><Tooltip text={`Result type: ${item.input_type}. ${item.direction==='lower'?'Lower result is better.':'Higher result is better.'}`}/>{meta.task_responsibility?<div className="cell-help">{meta.task_responsibility}</div>:null}<div className="cell-help">Measurement: {item.input_type==='choice'?'Custom dropdown':item.input_type}</div></td>
-              <td><div>{meta.measurement||'Enter the achieved result for this KPI.'}</div>{item.input_type==='choice'?<div className="score-map-chips">{Object.entries(scoreMap).map(([label,pct])=><span key={label}>{label}: {pct}%</span>)}</div>:<div className="kpi-threshold-summary"><div><strong>Target:</strong> {formatNumber(item.target_value)}{unit?` ${unit}`:''}</div>{threshold?<div><strong>Threshold:</strong> {threshold}</div>:<div className="cell-help">No hard threshold</div>}</div>}</td>
+              <td><div>{meta.measurement||'Enter the achieved result for this KPI.'}</div>{item.input_type==='choice'?<div className="score-map-chips">{Object.entries(scoreMap).map(([label,pct])=><span key={label}>{label}: {pct}%</span>)}</div>:<div className="kpi-threshold-summary">{threshold?<div><strong>Threshold:</strong> {threshold}</div>:<div className="cell-help">No hard threshold</div>}</div>}</td>
               <td><AnswerInput disabled={locked} item={item} value={v} onChange={patch=>setValue(item.id,patch)}/><ResultSummary item={item} value={v}/></td>
               <td><AnswerInput disabled={managerLocked||!isManagerMode} item={item} value={v} prefix="manager_" onChange={patch=>setValue(item.id,patch)}/><ResultSummary item={item} value={v} prefix="manager_"/></td>
               <td><strong>{item.weight}</strong></td>

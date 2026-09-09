@@ -6,9 +6,11 @@ import {Card,ErrorBox,PageHeader} from '../components/UI'
 
 const splitWeight=(total,count)=>{
   if(!count)return[]
-  const base=Math.floor((Number(total||0)/count)*100)/100
+  const wholeTotal=Math.max(0,Math.round(Number(total||0)))
+  const base=Math.floor(wholeTotal/count)
+  const remainder=wholeTotal-base*count
   const out=Array(count).fill(base)
-  out[count-1]=Number((Number(total||0)-base*(count-1)).toFixed(2))
+  for(let index=0;index<remainder;index+=1)out[index]+=1
   return out
 }
 
@@ -23,6 +25,7 @@ function mapToOptions(map){
 const optionsToMap=rows=>Object.fromEntries((rows||[]).filter(row=>String(row.label||'').trim()).map(row=>[String(row.label).trim(),Number(row.score||0)]))
 const numericTypes=['number','count','currency','percentage','days']
 const defaultUnit=type=>({number:'units',count:'count',currency:'₹',percentage:'%',days:'days'}[type]||'')
+const wholeValue=value=>value===''||value===null||value===undefined?'':Math.round(Number(value))
 
 const newItem=(weight=100)=>({
   question:'',task_responsibility:'',input_type:'number',weight,target_value:100,direction:'higher',
@@ -62,19 +65,19 @@ export default function TemplateBuilderV2(){
         setDepartment(found.department_id?String(found.department_id):'')
         setDesignation(found.designation_id?String(found.designation_id):'')
         setKras(found.kras.map(k=>({
-          name:k.name,weight:k.weight,items:k.items.map(i=>{
+          name:k.name,weight:wholeValue(k.weight),items:k.items.map(i=>{
             const cfg=i.config||{},meta=cfg.meta||{}
             const inputType=[...numericTypes,'choice'].includes(i.input_type)?i.input_type:'number'
             return{
               question:i.question,
               task_responsibility:meta.task_responsibility||'',
               input_type:inputType,
-              weight:i.weight,
-              target_value:i.target_value??(inputType==='percentage'?100:''),
+              weight:wholeValue(i.weight),
+              target_value:i.target_value==null?'':wholeValue(i.target_value),
               direction:i.direction||'higher',
               threshold_rule:meta.threshold_rule||'none',
-              threshold_min:meta.threshold_min??'',
-              threshold_max:meta.threshold_max??'',
+              threshold_min:meta.threshold_min==null?'':wholeValue(meta.threshold_min),
+              threshold_max:meta.threshold_max==null?'':wholeValue(meta.threshold_max),
               frequency:meta.frequency||'Monthly',
               unit:meta.unit||defaultUnit(inputType),
               measurement:meta.measurement||'',
@@ -95,7 +98,7 @@ export default function TemplateBuilderV2(){
     const item=kras[ki].items[ii]
     const patch={input_type:type}
     if(type==='choice')Object.assign(patch,{target_value:'',unit:'',direction:'higher',threshold_rule:'none',threshold_min:'',threshold_max:'',choice_options:[]})
-    else Object.assign(patch,{target_value:item.target_value===''||item.target_value==null?(type==='percentage'?100:100):item.target_value,unit:defaultUnit(type),direction:item.direction||'higher'})
+    else Object.assign(patch,{target_value:item.target_value===''||item.target_value==null?100:wholeValue(item.target_value),unit:defaultUnit(type),direction:item.direction||'higher'})
     updateItem(ki,ii,patch)
   }
 
@@ -129,8 +132,6 @@ export default function TemplateBuilderV2(){
     if(!item.question.trim())throw new Error(`${kraName}: every KPI needs a name`)
     if(Number(item.weight||0)<=0)throw new Error(`${item.question}: weight must be greater than 0`)
     if(numericTypes.includes(item.input_type)){
-      const target=Number(item.target_value)
-      if(!Number.isFinite(target)||target<0)throw new Error(`${item.question}: enter a valid expected target`)
       const min=item.threshold_min===''?null:Number(item.threshold_min),max=item.threshold_max===''?null:Number(item.threshold_max)
       if(min!==null&&!Number.isFinite(min))throw new Error(`${item.question}: enter a valid minimum threshold`)
       if(max!==null&&!Number.isFinite(max))throw new Error(`${item.question}: enter a valid maximum threshold`)
@@ -156,7 +157,7 @@ export default function TemplateBuilderV2(){
       frequency:item.frequency||'Monthly',unit:item.unit||'',measurement:item.measurement||'',evidence_required:false,
       scoring_method:'target_ratio',score_cap_pct:100,source:item.source||'',weight_basis:item.weight_basis||'Configured by HR',
       task_responsibility:(item.task_responsibility||item.question||'Complete assigned KPI task').trim(),score_limit:Number(item.weight||0),
-      threshold_rule:numeric?(item.threshold_rule||'none'):'none',
+      threshold_rule:numeric?(item.threshold_rule&&item.threshold_rule!=='none'?item.threshold_rule:(item.threshold_min!==''&&item.threshold_max!==''?'range':item.threshold_min!==''?'minimum':item.threshold_max!==''?'maximum':'none')):'none',
       threshold_min:numeric&&item.threshold_min!==''?Number(item.threshold_min):null,
       threshold_max:numeric&&item.threshold_max!==''?Number(item.threshold_max):null
     }
@@ -209,7 +210,7 @@ export default function TemplateBuilderV2(){
     </Card>
 
     <div className="stack">{kras.map((kra,ki)=><Card key={ki}>
-      <div className="kra-title"><div className="inline-fields"><input className="title-input" value={kra.name} onChange={e=>updateKra(ki,{name:e.target.value})}/><input className="weight-input no-spinner" type="number" min="0" max="100" step="1" value={kra.weight} onChange={e=>updateKra(ki,{weight:Number(e.target.value)})}/><span>marks</span></div><div className="row-actions"><button className="secondary small" onClick={()=>balanceItems(ki)}><Equal size={14}/>Balance KPIs</button><button className="icon-button danger" onClick={()=>setKras(cur=>cur.filter((_,i)=>i!==ki))}><Trash2 size={15}/></button></div></div>
+      <div className="kra-title"><div className="inline-fields"><input className="title-input" value={kra.name} onChange={e=>updateKra(ki,{name:e.target.value})}/><input className="weight-input no-spinner" type="number" min="0" max="100" step="1" value={kra.weight} onChange={e=>updateKra(ki,{weight:e.target.value===''?0:Math.round(Number(e.target.value))})}/><span>marks</span></div><div className="row-actions"><button className="secondary small" onClick={()=>balanceItems(ki)}><Equal size={14}/>Balance KPIs</button><button className="icon-button danger" onClick={()=>setKras(cur=>cur.filter((_,i)=>i!==ki))}><Trash2 size={15}/></button></div></div>
       <div className="dynamic-kpi-list">{kra.items.map((item,ii)=><div className="dynamic-kpi is-open" key={ii}>
         <div className="dynamic-kpi-head"><strong>KPI {ii+1}: {item.question||'Untitled KPI'}</strong><button className="icon-button danger" onClick={()=>updateKra(ki,{items:kra.items.filter((_,x)=>x!==ii)})}><Trash2 size={14}/></button></div>
         <div className="form-grid four">
@@ -219,20 +220,18 @@ export default function TemplateBuilderV2(){
           <label>Weight / marks<input type="text" inputMode="numeric" pattern="[0-9]*" value={item.weight} onChange={e=>{const digits=e.target.value.replace(/\D/g,'');updateItem(ki,ii,{weight:digits===''?0:Number(digits)})}}/></label>
 
           {numericTypes.includes(item.input_type)?<>
-            <label>Target / goal *<input className="no-spinner" type="number" min="0" step={item.input_type==='count'?'1':'0.01'} value={item.target_value??''} onChange={e=>updateItem(ki,ii,{target_value:e.target.value})} placeholder={item.input_type==='percentage'?'100':'e.g. 100'}/></label>
             <label>Unit<input value={item.unit} onChange={e=>updateItem(ki,ii,{unit:e.target.value})} placeholder={defaultUnit(item.input_type)}/></label>
             <label>Scoring direction<select value={item.direction} onChange={e=>updateItem(ki,ii,{direction:e.target.value})}><option value="higher">Higher result is better</option><option value="lower">Lower result is better</option></select></label>
-            <label>Threshold rule<select value={item.threshold_rule} onChange={e=>updateItem(ki,ii,{threshold_rule:e.target.value})}><option value="none">No hard threshold</option><option value="minimum">Minimum required</option><option value="maximum">Maximum allowed</option><option value="range">Acceptable range</option></select></label>
-            {['minimum','range'].includes(item.threshold_rule)?<label>Minimum threshold<input type="number" min="0" step={item.input_type==='count'?'1':'0.01'} value={item.threshold_min} onChange={e=>updateItem(ki,ii,{threshold_min:e.target.value})} placeholder="Minimum acceptable"/></label>:null}
-            {['maximum','range'].includes(item.threshold_rule)?<label>Maximum threshold<input type="number" min="0" step={item.input_type==='count'?'1':'0.01'} value={item.threshold_max} onChange={e=>updateItem(ki,ii,{threshold_max:e.target.value})} placeholder="Maximum allowed"/></label>:null}
-            {item.threshold_rule!=='none'?<div className="span-2 helper-strip threshold-helper"><strong>Qualification:</strong> a result outside this threshold receives 0 marks and is shown as Not Achieved.</div>:null}
+            <label>Minimum threshold<input type="number" min="0" step="1" value={item.threshold_min} onChange={e=>updateItem(ki,ii,{threshold_min:wholeValue(e.target.value)})} placeholder="Optional minimum"/></label>
+            <label>Maximum threshold<input type="number" min="0" step="1" value={item.threshold_max} onChange={e=>updateItem(ki,ii,{threshold_max:wholeValue(e.target.value)})} placeholder="Optional maximum"/></label>
+            <div className="span-2 helper-strip threshold-helper"><strong>Optional qualification:</strong> set your own minimum, maximum, or both. A result outside your criteria receives 0 marks and is shown as Not Achieved.</div>
           </>:null}
 
           {item.input_type==='choice'?<div className="span-2 custom-results-panel">
             <div className="custom-results-head"><div><strong>Custom results shown to employee</strong><div className="cell-help">{(item.choice_options||[]).length} option fields added</div></div><div className="responsive-actions"><button type="button" className="secondary small" onClick={()=>addOption(ki,ii)}><Plus size={13}/>Add result</button><button type="button" className="secondary small" onClick={()=>addMultipleOptions(ki,ii,5)}>+ Add 5 fields</button></div></div>
             <div className="quick-presets"><strong>Quick presets:</strong><button type="button" className="text-action" onClick={()=>applyPreset(ki,ii,'5star')}>5-Level</button><button type="button" className="text-action" onClick={()=>applyPreset(ki,ii,'3star')}>3-Level</button><button type="button" className="text-action" onClick={()=>applyPreset(ki,ii,'passfail')}>Pass/Fail</button><button type="button" className="text-action" onClick={()=>applyPreset(ki,ii,'numeric5')}>5 Custom Options</button></div>
             {(item.choice_options||[]).length===0?<div className="helper-strip">No results added yet. Click <strong>Add result</strong> or choose a quick preset.</div>:null}
-            <div className="custom-result-grid">{(item.choice_options||[]).map((row,oi)=><div key={oi} className="custom-result-row"><label>Result / option name<input value={row.label} onChange={e=>updateOption(ki,ii,oi,{label:e.target.value})} placeholder="Result name"/></label><label>Score %<input type="number" min="0" max="100" step="1" value={row.score} onChange={e=>updateOption(ki,ii,oi,{score:e.target.value})} placeholder="0-100"/></label><button type="button" className="icon-button danger" title="Remove result" onClick={()=>removeOption(ki,ii,oi)}><Trash2 size={14}/></button></div>)}</div>
+            <div className="custom-result-grid">{(item.choice_options||[]).map((row,oi)=><div key={oi} className="custom-result-row"><label>Result / option name<input value={row.label} onChange={e=>updateOption(ki,ii,oi,{label:e.target.value})} placeholder="Result name"/></label><label>Score %<input type="number" min="0" max="100" step="1" value={row.score} onChange={e=>updateOption(ki,ii,oi,{score:e.target.value===''?'':Math.round(Number(e.target.value))})} placeholder="0-100"/></label><button type="button" className="icon-button danger" title="Remove result" onClick={()=>removeOption(ki,ii,oi)}><Trash2 size={14}/></button></div>)}</div>
           </div>:null}
 
           <label>Review frequency<select value={item.frequency} onChange={e=>updateItem(ki,ii,{frequency:e.target.value})}><option>Monthly</option><option>Quarterly</option><option>Half-Yearly</option><option>Annual</option></select></label>

@@ -266,7 +266,7 @@ export default function TemplateBuilder() {
 
     <div className="stack">{kras.map((k,ki)=><Card key={ki}>
       <div className="kra-title">
-        <div className="inline-fields"><input className="title-input" value={k.name} onChange={e=>updateKra(ki,{name:e.target.value})}/><input className="weight-input" type="number" min="0" max="100" step="0.01" value={k.weight} onChange={e=>updateKra(ki,{weight:Number(e.target.value)})}/><span>marks</span></div>
+        <div className="inline-fields"><input className="title-input" value={k.name} onChange={e=>updateKra(ki,{name:e.target.value})}/><input className="weight-input" type="number" min="0" max="100" step="1" value={k.weight} onChange={e=>updateKra(ki,{weight:e.target.value===''?0:Math.round(Number(e.target.value))})}/><span>marks</span></div>
         <div className="row-actions"><button className="secondary small" onClick={()=>balanceItems(ki)}><Equal size={14}/>Balance items</button><button className="icon-button danger" aria-label="Delete KRA" onClick={()=>setKras(current=>current.filter((_,i)=>i!==ki))}><Trash2 size={16}/></button></div>
       </div>
       <div className="dynamic-kpi-list">{k.items.map((i,ii)=>{const itemKey=`${ki}-${ii}`,isOpen=expandedKpi===itemKey;return <div className={`dynamic-kpi ${isOpen?'is-open':''}`} key={ii}>
@@ -275,8 +275,8 @@ export default function TemplateBuilder() {
           <label className="span-2">KPI name<input value={i.question} onChange={e=>updateItem(ki,ii,{question:e.target.value})} placeholder="e.g. Java/Spring Boot development"/></label>
           <label className="span-2">Task responsibility<input value={i.task_responsibility} onChange={e=>updateItem(ki,ii,{task_responsibility:e.target.value})} placeholder="What must the employee complete?"/></label>
           <label>Answer type<select value={['percentage','number','choice'].includes(i.input_type)?i.input_type:'percentage'} onChange={e=>updateItem(ki,ii,{input_type:e.target.value,choice_map:e.target.value==='choice'?choiceText(orgDefaults.choiceMap):i.choice_map})}><option value="percentage">Percentage</option><option value="number">Number</option><option value="choice">Objective</option></select></label>
-          <label>Score <span className="field-note">Maximum weight base: {i.weight}</span><input type="number" min="0" max={i.weight} step="0.01" value={i.score_limit} onChange={e=>updateItem(ki,ii,{score_limit:e.target.value})} placeholder="Enter score"/></label>
-          <label>Expected target<input type="number" step="0.01" disabled={['choice','yesno','rating'].includes(i.input_type)} value={i.target_value ?? ''} onChange={e=>updateItem(ki,ii,{target_value:e.target.value})} placeholder="Optional"/></label>
+          <label>Score <span className="field-note">Maximum weight base: {i.weight}</span><input type="number" min="0" max={i.weight} step="1" value={i.score_limit} onChange={e=>updateItem(ki,ii,{score_limit:e.target.value===''?'':Math.round(Number(e.target.value))})} placeholder="Enter score"/></label>
+          <label>Expected target<input type="number" step="1" disabled={['choice','yesno','rating'].includes(i.input_type)} value={i.target_value ?? ''} onChange={e=>updateItem(ki,ii,{target_value:e.target.value===''?'':Math.round(Number(e.target.value))})} placeholder="Optional"/></label>
           <label>Direction<select disabled={['choice','yesno','rating'].includes(i.input_type)} value={i.direction} onChange={e=>updateItem(ki,ii,{direction:e.target.value})}><option value="higher">Higher is better</option><option value="lower">Lower is better</option></select></label>
           <label>Frequency<input value={i.frequency} onChange={e=>updateItem(ki,ii,{frequency:e.target.value})} placeholder="Monthly / Weekly / Per Release"/></label>
           <label>Unit<input value={i.unit} onChange={e=>updateItem(ki,ii,{unit:e.target.value})} placeholder="%, ₹, days, count"/></label>

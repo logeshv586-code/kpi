@@ -27,7 +27,7 @@ from ..models import (
     User,
 )
 from ..schemas import ResponseIn, ReviewIn, ReopenIn
-from ..services import audit, calculate_achievement_percent, calculate_item_score
+from ..services import audit, calculate_achievement_percent, calculate_item_score, threshold_status
 from . import kpi_router, kpi_submit_override
 
 
@@ -763,10 +763,23 @@ def relationship_assignment_pdf(
                 manager_actual = response.manager_selected_option or ("—" if response.manager_actual_numeric is None else f"{response.manager_actual_numeric:g}")
                 remarks = response.remarks or ""
                 manager_mark = response.manager_score or 0.0
+            threshold = threshold_status(item, response.actual_numeric if response else None)
+            target_parts = []
+            if item.target_value is not None:
+                target_parts.append(f"Target: {item.target_value:g}")
+            if threshold["minimum"] is not None:
+                target_parts.append(f"Minimum: {threshold['minimum']:g}")
+            if threshold["maximum"] is not None:
+                target_parts.append(f"Maximum: {threshold['maximum']:g}")
+            if threshold["passed"] is False:
+                target_parts.append(f"<b>{threshold['reason']}</b>")
+            elif threshold["passed"] is True and threshold["rule"] != "none":
+                target_parts.append("Threshold achieved")
+            target_cell = Paragraph("<br/>".join(target_parts) if target_parts else "—", styles["BodyText"])
             marks = f"{manager_mark:.1f}" if review_complete else "Pending"
             data.append([
                 Paragraph(item.question, styles["BodyText"]),
-                "—" if item.target_value is None else f"{item.target_value:g}",
+                target_cell,
                 employee_actual,
                 manager_actual,
                 f"{item.weight:g}",

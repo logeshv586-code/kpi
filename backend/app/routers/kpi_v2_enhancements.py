@@ -26,9 +26,11 @@ from ..models import (
     Role,
     SystemSetting,
     User,
+    Kra,
 )
 from ..schemas import CycleIn, ReviewIn
 from ..services import audit, calculate_item_score
+from ..services import audit, calculate_item_score, item_config, threshold_status
 from . import dashboard_router, kpi_router
 from . import manager_review_lock_override as review_lock
 from . import relationship_review_override as review
@@ -293,6 +295,7 @@ def enhanced_my_assignments(db: Session = Depends(get_db), user: User = Depends(
             joinedload(KpiAssignment.cycle),
             joinedload(KpiAssignment.template).joinedload(KpiTemplate.designation),
             joinedload(KpiAssignment.template).joinedload(KpiTemplate.kras),
+            joinedload(KpiAssignment.template).joinedload(KpiTemplate.kras).joinedload(Kra.items),
             joinedload(KpiAssignment.responses),
         )
         .order_by(KpiAssignment.id.desc())
@@ -499,6 +502,7 @@ def review_matrix(db: Session = Depends(get_db), user: User = Depends(get_curren
     scores = defaultdict(dict)
     employee_scores = defaultdict(dict)
     manager_scores = defaultdict(dict)
+    threshold_failures = defaultdict(dict)
 
     for assignment in assignments:
         if not assignment.cycle or not assignment.user:
@@ -530,6 +534,34 @@ def review_matrix(db: Session = Depends(get_db), user: User = Depends(get_curren
         scores[employee.id][key] = _official_score(assignment)
         employee_scores[employee.id][key] = int(round(float(assignment.calculated_score or 0)))
         manager_scores[employee.id][key] = None if assignment.manager_score is None else int(round(float(assignment.manager_score)))
+        responses = {response.kpi_item_id: response for response in assignment.responses}
+        manager_reviewed = assignment.manager_score is not None or assignment.final_score is not None
+        failures = []
+        for kra in assignment.template.kras:
+            for item in kra.items:
+                response = responses.get(item.id)
+                employee_actual = response.actual_numeric if response and response.actual_numeric is not None else None
+                manager_actual = response.manager_actual_numeric if response and response.manager_actual_numeric is not None else None
+                actual = manager_actual if manager_reviewed and manager_actual is not None else employee_actual
+                status = threshold_status(item, actual)
+                config = item_config(item)
+                meta = config["meta"]
+                minimum = meta.get("threshold_min")
+                maximum = meta.get("threshold_max")
+                failed_minimum = actual is not None and minimum is not None and float(actual) < float(minimum)
+                failed_maximum = actual is not None and maximum is not None and float(actual) > float(maximum)
+                if not failed_minimum and not failed_maximum and status["passed"] is not False:
+                    continue
+                unit = meta.get("unit") or ""
+                suffix = f" {unit}" if unit else ""
+                actual_text = f"; actual {float(actual):g}{suffix}" if actual is not None else ""
+                reasons = []
+                if failed_minimum:
+                    reasons.append(f"Minimum {float(minimum):g}{suffix} not achieved")
+                if failed_maximum:
+                    reasons.append(f"Maximum {float(maximum):g}{suffix} exceeded")
+                failures.append(f"{item.question}: {'; '.join(reasons) or status['reason']}{actual_text}")
+        threshold_failures[employee.id][key] = failures
 
     periods = sorted(
         period_by_id.values(),
@@ -550,6 +582,7 @@ def review_matrix(db: Session = Depends(get_db), user: User = Depends(get_curren
                 "scores": scores[user_id],
                 "employee_scores": employee_scores[user_id],
                 "manager_scores": manager_scores[user_id],
+                            "threshold_failures": threshold_failures[user_id],
             }
         )
     return {"periods": periods, "rows": output, "score_source": "manager_score", "financial_year_basis": "April-March"}

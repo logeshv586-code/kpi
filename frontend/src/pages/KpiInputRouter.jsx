@@ -60,24 +60,18 @@ function scoreItem(item,value,prefix=''){
 }
 
 function thresholdLabel(item){
-  const meta=item.config?.meta||{},rule=meta.threshold_rule||'none',unit=meta.unit||''
-  const min=meta.threshold_min,max=meta.threshold_max,suffix=unit?` ${unit}`:''
-  if(rule==='minimum'&&min!==null&&min!==undefined)return`Minimum: ${min}${suffix}`
-  if(rule==='maximum'&&max!==null&&max!==undefined)return`Maximum: ${max}${suffix}`
-  if(rule==='range'){
-    if(min!==null&&min!==undefined&&max!==null&&max!==undefined)return`Range: ${min}${suffix} – ${max}${suffix}`
-    if(min!==null&&min!==undefined)return`Minimum: ${min}${suffix}`
-    if(max!==null&&max!==undefined)return`Maximum: ${max}${suffix}`
-  }
-  return'No hard threshold'
+  const meta=item.config?.meta||{},unit=meta.unit||'',suffix=unit?` ${unit}`:'',parts=[]
+  const min=meta.threshold_min,max=meta.threshold_max
+  if(min!==null&&min!==undefined&&min!=='')parts.push(`Minimum: ${min}${suffix}`)
+  if(max!==null&&max!==undefined&&max!=='')parts.push(`Maximum: ${max}${suffix}`)
+  return parts.length?parts.join(' · '):'No hard threshold'
 }
 
 function TargetSummary({item,value,prefix=''}){
   const unit=item.config?.meta?.unit||'',suffix=unit?` ${unit}`:''
   const threshold=thresholdInfo(item,value,prefix)
   return <div className="kpi-threshold-summary">
-    <div><strong>Target:</strong> {item.target_value==null?'Configured criteria':`${item.target_value}${suffix}`}</div>
-    {threshold.configured?<div><strong>{thresholdLabel(item)}</strong></div>:null}
+    {threshold.configured?<div><strong>{thresholdLabel(item)}</strong></div>:<div className="cell-help">No hard threshold</div>}
     {threshold.passed!==null?<div className={threshold.passed?'threshold-achieved':'threshold-not-achieved'}>{threshold.passed?'Achieved':`Not Achieved · ${threshold.reason}`}</div>:null}
   </div>
 }
@@ -85,7 +79,7 @@ function TargetSummary({item,value,prefix=''}){
 function ManagerInput({item,value,onChange,disabled}){
   const v=value||{},cfg=item.config||{}
   if(['choice','yesno'].includes(item.input_type))return <select disabled={disabled} value={v.manager_selected_option||''} onChange={e=>onChange({manager_selected_option:e.target.value})}><option value="">Select manager result...</option>{Object.keys(cfg.score_map||{}).map(option=><option key={option} value={option}>{option}</option>)}</select>
-  return <input disabled={disabled} type="number" min="0" step={item.input_type==='count'?'1':'0.01'} max={item.input_type==='rating'?(cfg.max_rating||5):undefined} value={v.manager_actual_numeric??''} onChange={e=>onChange({manager_actual_numeric:e.target.value===''?null:Number(e.target.value)})} placeholder="Enter achieved result"/>
+  return <input disabled={disabled} type="number" min="0" step="1" max={item.input_type==='rating'?(cfg.max_rating||5):undefined} value={v.manager_actual_numeric==null?'':Math.round(Number(v.manager_actual_numeric))} onChange={e=>onChange({manager_actual_numeric:e.target.value===''?null:Math.round(Number(e.target.value))})} placeholder="Enter achieved result"/>
 }
 
 function employeeAnswer(item,value){
@@ -150,7 +144,7 @@ function ReviewerWorkspace({initialList,onListChange}){
 
   if(!assignment)return<Loader/>
   return <>
-    <PageHeader title={canReview?'KPI Manager Review':'KPI Hierarchy View'} subtitle={canReview?'Review the direct report. Staff enter achieved values; the system applies targets and thresholds.':'You can view KPI results for all levels below you. Manager Score remains editable only by the immediate reporting person.'} actions={<button className="secondary" onClick={downloadPdf}><Download size={16}/>Export PDF Report</button>}/>
+    <PageHeader title={canReview?'KPI Manager Review':'KPI Hierarchy View'} subtitle={canReview?'Review the direct report. Staff enter achieved values; the system applies configured thresholds.':'You can view KPI results for all levels below you. Manager Score remains editable only by the immediate reporting person.'} actions={<button className="secondary" onClick={downloadPdf}><Download size={16}/>Export PDF Report</button>}/>
     <ErrorBox error={error}/>{message?<div className="success-box" style={{marginBottom:'12px'}}>{message}</div>:null}
     <Card><div className="form-grid three-responsive"><label><span>1. Department</span><select value={department||''} onChange={e=>selectDepartment(e.target.value)}>{departments.map(name=><option key={name} value={name}>{name}</option>)}</select></label><label><span>2. Employee</span><select value={personId} onChange={e=>selectPerson(e.target.value)}>{people.map(person=><option key={person.id} value={person.id}>{person.name} ({person.no}){person.designation?` · ${person.designation}`:''}</option>)}</select></label><label><span>3. Review Period</span><select value={String(id||'')} onChange={e=>selectPeriod(e.target.value)}>{personRows.map(row=><option key={row.id} value={row.id}>{periodLabel(row)}</option>)}</select></label></div></Card>
 
@@ -165,7 +159,7 @@ function ReviewerWorkspace({initialList,onListChange}){
     {assignment.subordinate_score_cap_applies?<div className="subordinate-cap-note"><strong>Subordinate score rule:</strong> {pendingSubordinates>0?`${pendingSubordinates} direct-report KPI review${pendingSubordinates===1?' is':'s are'} still pending. This manager's review cannot be completed until those scores are available.`:`Maximum Manager Score for this employee: ${cap}/100, based on the rounded summarized score of direct reports.`}</div>:null}
     {canReview&&!canEdit?<div className="locked-note" style={{marginBottom:'14px'}}>{assignment.status==='draft'||assignment.status==='not_started'?'Employee must submit the KPI before Manager Score can be entered.':assignment.status==='finalized'&&!isSuperAdmin?'This KPI is finalized. Only Super Admin can change the Manager Score.':'Manager Score editing is currently locked for this KPI.'}</div>:null}
 
-    {assignment.template.kras.map(kra=><Card key={kra.id}><div className="kra-review-head"><div><strong>{kra.name}</strong><div className="muted">Achieved values are measured against the configured target and threshold.</div></div><div className="weight-chip">{kra.weight} marks weightage</div></div><div className="table-wrap"><table className="kpi-input-table"><thead><tr><th>KPI parameter & task</th><th>Target / threshold</th><th>Staff achieved</th><th>Manager achieved</th><th>Weight</th><th>Marks scored</th><th>Employee notes</th></tr></thead><tbody>{kra.items.map(item=>{
+    {assignment.template.kras.map(kra=><Card key={kra.id}><div className="kra-review-head"><div><strong>{kra.name}</strong><div className="muted">Achieved values are measured against configured thresholds.</div></div><div className="weight-chip">{kra.weight} marks weightage</div></div><div className="table-wrap"><table className="kpi-input-table"><thead><tr><th>KPI parameter & task</th><th>Threshold criteria</th><th>Staff achieved</th><th>Manager achieved</th><th>Weight</th><th>Marks scored</th><th>Employee notes</th></tr></thead><tbody>{kra.items.map(item=>{
       const v=values[item.id]||{},employeeMark=scoreItem(item,v),managerMark=scoreItem(item,v,'manager_'),staffThreshold=thresholdInfo(item,v),managerThreshold=thresholdInfo(item,v,'manager_')
       return <tr key={item.id}><td><strong>{item.question}</strong><div className="cell-help">{item.config?.meta?.task_responsibility||''}</div></td><td><TargetSummary item={item} value={v}/></td><td><div className="achieved-box"><strong>{employeeAnswer(item,v)}</strong><div className="cell-help">Staff mark: {employeeMark} / {item.weight}</div>{staffThreshold.passed===false?<div className="threshold-not-achieved">Not Achieved</div>:staffThreshold.passed===true?<div className="threshold-achieved">Achieved</div>:null}</div></td><td><ManagerInput disabled={!canEdit||busy} item={item} value={v} onChange={patch=>setManagerValue(item.id,patch)}/>{managerThreshold.passed===false?<div className="threshold-not-achieved">Not Achieved · 0 marks</div>:managerThreshold.passed===true?<div className="threshold-achieved">Achieved</div>:null}</td><td><strong>{item.weight}</strong></td><td><strong>{managerMark}</strong> / {item.weight}</td><td>{v.remarks||v.measurement||'—'}</td></tr>
     })}</tbody></table></div></Card>)}
