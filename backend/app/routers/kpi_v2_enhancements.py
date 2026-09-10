@@ -594,10 +594,14 @@ def _notification_log(db: Session) -> tuple[SystemSetting, dict]:
         setting = SystemSetting(key="kpi_notification_log", value={"sent": {}})
         db.add(setting)
         db.flush()
-    value = setting.value if isinstance(setting.value, dict) else {}
-    sent = value.get("sent") if isinstance(value.get("sent"), dict) else {}
-    value["sent"] = sent
-    return setting, value
+
+    # Never mutate the dict currently attached to SQLAlchemy's JSON attribute.
+    # Nested plain-dict changes are not tracked automatically and can therefore
+    # disappear at flush/commit time. Work on a copy, then replace the whole
+    # JSON value in _send_once so duplicate-reminder keys are truly persisted.
+    raw_value = setting.value if isinstance(setting.value, dict) else {}
+    raw_sent = raw_value.get("sent") if isinstance(raw_value.get("sent"), dict) else {}
+    return setting, {"sent": dict(raw_sent)}
 
 
 def _send_once(db: Session, key: str, to_email: str, subject: str, body: str) -> bool:
