@@ -10,6 +10,7 @@ from .models import AuditLog, KpiAssignment, KpiItem, KpiResponse, KpiTemplate
 
 NUMERIC_INPUT_TYPES = {"percentage", "number", "currency", "days", "count"}
 THRESHOLD_RULES = {"none", "minimum", "maximum", "range"}
+KRA_AVERAGE_100_MODEL = "kra_average_100"
 
 
 def audit(db: Session, actor_id: int | None, action: str, entity_type: str, entity_id: int | None = None, details: dict | None = None):
@@ -26,11 +27,11 @@ def _optional_float(value: Any) -> float | None:
 
 
 def item_config(item: KpiItem) -> dict[str, Any]:
-    """Return normalized dynamic KPI configuration.
+    """Return normalized KPI configuration.
 
-    Older templates stored choice mappings directly in ``options``. Newer templates
-    use ``options={score_map, meta, thresholds}``. Supporting both keeps historical
-    templates valid while v2 adds measurable min/max threshold rules.
+    The current model scores every KPI independently on a 0-100 scale and uses
+    only a minimum qualifying score. Legacy minimum/maximum/range metadata is
+    still understood so historical published templates keep their old results.
     """
     raw = item.options or {}
     if not isinstance(raw, dict):
@@ -43,21 +44,35 @@ def item_config(item: KpiItem) -> dict[str, Any]:
     max_rating = raw.get("max", meta.get("max_rating", 5))
     thresholds = raw.get("thresholds") if isinstance(raw.get("thresholds"), list) else []
 
-    threshold_min = _optional_float(meta.get("threshold_min"))
-    threshold_max = _optional_float(meta.get("threshold_max"))
-    threshold_rule = str(meta.get("threshold_rule") or "none").lower()
-    if threshold_rule not in THRESHOLD_RULES:
-        threshold_rule = "none"
-    if threshold_rule == "none":
-        if threshold_min is not None and threshold_max is not None:
-            threshold_rule = "range"
-        elif threshold_min is not None:
-            threshold_rule = "minimum"
-        elif threshold_max is not None:
-            threshold_rule = "maximum"
-    meta["threshold_rule"] = threshold_rule
-    meta["threshold_min"] = threshold_min
-    meta["threshold_max"] = threshold_max
+    scoring_model = str(meta.get("scoring_model") or "").strip().lower()
+    if scoring_model == KRA_AVERAGE_100_MODEL:
+        minimum_score = _optional_float(meta.get("minimum_score"))
+        if minimum_score is None:
+            minimum_score = _optional_float(meta.get("threshold_min"))
+        minimum_score = 0.0 if minimum_score is None else minimum_score
+        meta["scoring_model"] = KRA_AVERAGE_100_MODEL
+        meta["score_base"] = 100
+        meta["minimum_score"] = minimum_score
+        # New KRA-average scoring deliberately has no maximum/range threshold.
+        meta["threshold_rule"] = "minimum" if minimum_score > 0 else "none"
+        meta["threshold_min"] = minimum_score
+        meta["threshold_max"] = None
+    else:
+        threshold_min = _optional_float(meta.get("threshold_min"))
+        threshold_max = _optional_float(meta.get("threshold_max"))
+        threshold_rule = str(meta.get("threshold_rule") or "none").lower()
+        if threshold_rule not in THRESHOLD_RULES:
+            threshold_rule = "none"
+        if threshold_rule == "none":
+            if threshold_min is not None and threshold_max is not None:
+                threshold_rule = "range"
+            elif threshold_min is not None:
+                threshold_rule = "minimum"
+            elif threshold_max is not None:
+                threshold_rule = "maximum"
+        meta["threshold_rule"] = threshold_rule
+        meta["threshold_min"] = threshold_min
+        meta["threshold_max"] = threshold_max
 
     return {
         "meta": meta,
@@ -65,6 +80,17 @@ def item_config(item: KpiItem) -> dict[str, Any]:
         "max_rating": max_rating,
         "thresholds": thresholds,
     }
+
+
+def _uses_kra_average_100(item: KpiItem) -> bool:
+    return item_config(item)["meta"].get("scoring_model") == KRA_AVERAGE_100_MODEL
+
+
+def _round_item_mark(item: KpiItem, value: float) -> float:
+    # The KRA-average model needs decimal contribution marks (for example
+    # 52.50 from four equally-weighted KPI scores). Legacy templates retain
+    # whole-number marks exactly as before.
+    return float(round(value, 2)) if _uses_kra_average_100(item) else float(round(value))
 
 
 def validate_template(template: KpiTemplate, strict: bool = True) -> tuple[bool, str]:
@@ -103,18 +129,23 @@ def validate_template(template: KpiTemplate, strict: bool = True) -> tuple[bool,
             minimum = meta.get("threshold_min")
             maximum = meta.get("threshold_max")
             rule = meta.get("threshold_rule", "none")
-            if minimum is not None and maximum is not None and minimum > maximum:
-                return False, f"KPI '{item.question}' minimum threshold cannot be greater than maximum threshold"
-            if item.input_type == "percentage":
-                for label, value in (("minimum", minimum), ("maximum", maximum)):
-                    if value is not None and not 0 <= value <= 100:
-                        return False, f"KPI '{item.question}' {label} percentage threshold must be between 0 and 100"
-            if rule == "minimum" and minimum is None:
-                return False, f"KPI '{item.question}' requires a minimum threshold"
-            if rule == "maximum" and maximum is None:
-                return False, f"KPI '{item.question}' requires a maximum threshold"
-            if rule == "range" and minimum is None and maximum is None:
-                return False, f"KPI '{item.question}' requires at least one range boundary"
+
+            if meta.get("scoring_model") == KRA_AVERAGE_100_MODEL:
+                if minimum is None or not 0 <= float(minimum) <= 100:
+                    return False, f"KPI '{item.question}' minimum qualifying score must be between 0 and 100"
+            else:
+                if minimum is not None and maximum is not None and minimum > maximum:
+                    return False, f"KPI '{item.question}' minimum threshold cannot be greater than maximum threshold"
+                if item.input_type == "percentage":
+                    for label, value in (("minimum", minimum), ("maximum", maximum)):
+                        if value is not None and not 0 <= value <= 100:
+                            return False, f"KPI '{item.question}' {label} percentage threshold must be between 0 and 100"
+                if rule == "minimum" and minimum is None:
+                    return False, f"KPI '{item.question}' requires a minimum threshold"
+                if rule == "maximum" and maximum is None:
+                    return False, f"KPI '{item.question}' requires a maximum threshold"
+                if rule == "range" and minimum is None and maximum is None:
+                    return False, f"KPI '{item.question}' requires at least one range boundary"
 
             if strict and item.input_type == "choice":
                 score_map = cfg["score_map"]
@@ -149,7 +180,7 @@ def _threshold_score_pct(actual: float, thresholds: list[dict], direction: str) 
 
 
 def threshold_status(item: KpiItem, actual: float | None) -> dict[str, Any]:
-    """Return threshold pass/fail information for measurable numeric KPIs."""
+    """Return minimum/legacy-threshold pass information for measurable KPIs."""
     cfg = item_config(item)
     meta = cfg["meta"]
     rule = meta.get("threshold_rule", "none")
@@ -160,10 +191,10 @@ def threshold_status(item: KpiItem, actual: float | None) -> dict[str, Any]:
 
     value = float(actual)
     passed = True
-    reason = "Threshold achieved"
+    reason = "Minimum score achieved"
     if rule == "minimum" and minimum is not None:
         passed = value >= minimum
-        reason = "Minimum achieved" if passed else f"Minimum {minimum:g} not achieved"
+        reason = "Minimum score achieved" if passed else f"Minimum score {minimum:g} not achieved"
     elif rule == "maximum" and maximum is not None:
         passed = value <= maximum
         reason = "Maximum limit met" if passed else f"Maximum {maximum:g} exceeded"
@@ -204,16 +235,22 @@ def calculate_item_score(item: KpiItem, response: KpiResponse, is_manager: bool 
             return 0.0
         actual = float(actual_val)
 
-        # Hard threshold rule: below the configured minimum / above the configured
-        # maximum receives zero marks even when the target-ratio formula would
-        # otherwise award partial marks.
+        # Current KRA-average model: employee/manager enters a direct score from
+        # 0 to 100. It is zeroed only when it is below the configured minimum.
+        if meta.get("scoring_model") == KRA_AVERAGE_100_MODEL:
+            if not _threshold_gate(item, actual):
+                return 0.0
+            score_pct = max(0.0, min(actual, 100.0))
+            return _round_item_mark(item, float(item.weight) * score_pct / 100.0)
+
+        # Legacy hard-threshold behavior is retained for historical templates.
         if not _threshold_gate(item, actual):
             return 0.0
 
         if scoring_method == "threshold":
             pct = _threshold_score_pct(actual, cfg["thresholds"], item.direction)
             ratio = max(0.0, min((pct or 0) / 100.0, cap_ratio))
-            return float(round(float(item.weight) * ratio))
+            return _round_item_mark(item, float(item.weight) * ratio)
 
         if scoring_method == "direct_percentage" or (item.input_type == "percentage" and item.target_value is None):
             ratio = actual / 100.0
@@ -233,28 +270,29 @@ def calculate_item_score(item: KpiItem, response: KpiResponse, is_manager: bool 
             ratio = 1.0 if target == 0 and actual >= 0 else (actual / target if target else 0.0)
 
         ratio = max(0.0, min(ratio, cap_ratio))
-        return float(round(float(item.weight) * ratio))
+        return _round_item_mark(item, float(item.weight) * ratio)
 
     if item.input_type in {"choice", "yesno"}:
         selected = response.manager_selected_option if is_manager else response.selected_option
         if not selected:
             return 0.0
         pct = float(cfg["score_map"].get(selected, 0))
-        return float(round(float(item.weight) * max(0.0, min(pct / 100.0, cap_ratio))))
+        return _round_item_mark(item, float(item.weight) * max(0.0, min(pct / 100.0, cap_ratio)))
 
     if item.input_type == "rating":
         actual_val = response.manager_actual_numeric if is_manager else response.actual_numeric
         if actual_val is None:
             return 0.0
         max_rating = max(1.0, float(cfg["max_rating"] or 5))
-        return float(round(float(item.weight) * max(0.0, min(float(actual_val) / max_rating, cap_ratio))))
+        return _round_item_mark(item, float(item.weight) * max(0.0, min(float(actual_val) / max_rating, cap_ratio)))
 
     return 0.0
 
 
 def calculate_achievement_percent(item: KpiItem, response: KpiResponse, is_manager: bool = False) -> int:
-    """Return measurable achievement percentage, independent of threshold score gating."""
+    """Return the KPI's independent 0-100 achievement score."""
     cfg = item_config(item)
+    meta = cfg["meta"]
     if item.input_type in {"choice", "yesno"}:
         selected = response.manager_selected_option if is_manager else response.selected_option
         return int(round(float(cfg["score_map"].get(selected, 0)))) if selected else 0
@@ -263,6 +301,12 @@ def calculate_achievement_percent(item: KpiItem, response: KpiResponse, is_manag
     if actual_val is None:
         return 0
     actual = float(actual_val)
+
+    if meta.get("scoring_model") == KRA_AVERAGE_100_MODEL:
+        if not _threshold_gate(item, actual):
+            return 0
+        return int(round(max(0.0, min(actual, 100.0))))
+
     if item.input_type == "percentage" and item.target_value is None:
         return int(round(max(0.0, actual)))
     if item.target_value is None:
@@ -295,6 +339,7 @@ def recalc_assignment(db: Session, assignment_id: int) -> float:
     total = 0.0
     manager_total = 0.0
     has_manager_input = False
+    uses_kra_average = False
     for response in assignment.responses:
         response.score = calculate_item_score(response.item, response, is_manager=False)
         manager_present = response.manager_actual_numeric is not None or bool(response.manager_selected_option)
@@ -302,7 +347,13 @@ def recalc_assignment(db: Session, assignment_id: int) -> float:
         total += response.score
         manager_total += response.manager_score
         has_manager_input = has_manager_input or manager_present
-    assignment.calculated_score = float(round(min(total, 100.0)))
-    assignment.manager_score = float(round(min(manager_total, 100.0))) if has_manager_input else None
+        uses_kra_average = uses_kra_average or _uses_kra_average_100(response.item)
+
+    if uses_kra_average:
+        assignment.calculated_score = float(round(min(total, 100.0), 2))
+        assignment.manager_score = float(round(min(manager_total, 100.0), 2)) if has_manager_input else None
+    else:
+        assignment.calculated_score = float(round(min(total, 100.0)))
+        assignment.manager_score = float(round(min(manager_total, 100.0))) if has_manager_input else None
     db.flush()
     return assignment.calculated_score

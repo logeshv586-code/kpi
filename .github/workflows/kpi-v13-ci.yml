@@ -31,6 +31,12 @@ jobs:
           SECRET_KEY: test-secret-test-secret-test-secret-123
         run: PYTHONPATH=backend python backend/tests/run_v13_rule_tests.py
 
+      - name: KRA average 100 scoring
+        env:
+          DATABASE_URL: sqlite:////tmp/kpi_kra_average_ci.db
+          SECRET_KEY: test-secret-test-secret-test-secret-123
+        run: PYTHONPATH=backend python backend/tests/run_kra_average_scoring_tests.py
+
       - name: KPI company email gateway
         env:
           DATABASE_URL: sqlite:////tmp/kpi_mail_ci.db
