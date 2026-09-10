@@ -5,7 +5,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
-from .models import AuditLog, KpiAssignment, KpiItem, KpiResponse, KpiTemplate
+from .models import AuditLog, KpiAssignment, KpiItem, KpiResponse, KpiTemplate, Kra
 
 
 NUMERIC_INPUT_TYPES = {"percentage", "number", "currency", "days", "count"}
@@ -29,9 +29,9 @@ def _optional_float(value: Any) -> float | None:
 def item_config(item: KpiItem) -> dict[str, Any]:
     """Return normalized KPI configuration.
 
-    The current model scores every KPI independently on a 0-100 scale and uses
-    only a minimum qualifying score. Legacy minimum/maximum/range metadata is
-    still understood so historical published templates keep their old results.
+    Current templates use the spreadsheet model: every KPI is scored out of 100,
+    only a minimum qualifying score is configurable, and KRAs apply the weight.
+    Legacy min/max/range metadata remains readable for historical templates.
     """
     raw = item.options or {}
     if not isinstance(raw, dict):
@@ -53,7 +53,6 @@ def item_config(item: KpiItem) -> dict[str, Any]:
         meta["scoring_model"] = KRA_AVERAGE_100_MODEL
         meta["score_base"] = 100
         meta["minimum_score"] = minimum_score
-        # New KRA-average scoring deliberately has no maximum/range threshold.
         meta["threshold_rule"] = "minimum" if minimum_score > 0 else "none"
         meta["threshold_min"] = minimum_score
         meta["threshold_max"] = None
@@ -87,10 +86,10 @@ def _uses_kra_average_100(item: KpiItem) -> bool:
 
 
 def _round_item_mark(item: KpiItem, value: float) -> float:
-    # The KRA-average model needs decimal contribution marks (for example
-    # 52.50 from four equally-weighted KPI scores). Legacy templates retain
-    # whole-number marks exactly as before.
-    return float(round(value, 2)) if _uses_kra_average_100(item) else float(round(value))
+    # New-model contributions remain unrounded until the KRA/final total is
+    # calculated. This prevents 3 or 7 KPI KRAs losing points through row-level
+    # rounding. Legacy templates retain their historical whole-mark behavior.
+    return float(value) if _uses_kra_average_100(item) else float(round(value))
 
 
 def validate_template(template: KpiTemplate, strict: bool = True) -> tuple[bool, str]:
@@ -116,6 +115,7 @@ def validate_template(template: KpiTemplate, strict: bool = True) -> tuple[bool,
             return False, f"KPI weights inside '{kra.name}' cannot exceed {kra.weight}. Current total: {item_total}"
         if strict and abs(item_total - float(kra.weight or 0)) > 0.001:
             return False, f"KPI weights inside '{kra.name}' must total {kra.weight}. Current total: {item_total}"
+
         for item in kra.items:
             if not item.question.strip():
                 return False, f"Every KPI parameter inside '{kra.name}' needs a name"
@@ -133,6 +133,10 @@ def validate_template(template: KpiTemplate, strict: bool = True) -> tuple[bool,
             if meta.get("scoring_model") == KRA_AVERAGE_100_MODEL:
                 if minimum is None or not 0 <= float(minimum) <= 100:
                     return False, f"KPI '{item.question}' minimum qualifying score must be between 0 and 100"
+                if not float(minimum).is_integer():
+                    return False, f"KPI '{item.question}' minimum qualifying score must be a whole number"
+                if int(meta.get("score_base", 100)) != 100:
+                    return False, f"KPI '{item.question}' score base must be 100"
             else:
                 if minimum is not None and maximum is not None and minimum > maximum:
                     return False, f"KPI '{item.question}' minimum threshold cannot be greater than maximum threshold"
@@ -222,6 +226,34 @@ def _threshold_gate(item: KpiItem, actual: float) -> bool:
     return status.get("passed") is not False
 
 
+def calculate_kpi_score_100(item: KpiItem, response: KpiResponse, is_manager: bool = False) -> int:
+    """Return the displayed whole-number KPI score before KRA weighting."""
+    cfg = item_config(item)
+    meta = cfg["meta"]
+
+    if item.input_type in {"choice", "yesno"}:
+        selected = response.manager_selected_option if is_manager else response.selected_option
+        if not selected:
+            return 0
+        raw = max(0.0, min(100.0, float(cfg["score_map"].get(selected, 0))))
+        minimum = float(meta.get("minimum_score", 0) or 0)
+        if meta.get("scoring_model") == KRA_AVERAGE_100_MODEL and raw < minimum:
+            return 0
+        return int(round(raw))
+
+    actual_val = response.manager_actual_numeric if is_manager else response.actual_numeric
+    if actual_val is None:
+        return 0
+    actual = float(actual_val)
+
+    if meta.get("scoring_model") == KRA_AVERAGE_100_MODEL:
+        if not _threshold_gate(item, actual):
+            return 0
+        return int(round(max(0.0, min(actual, 100.0))))
+
+    return calculate_achievement_percent(item, response, is_manager=is_manager)
+
+
 def calculate_item_score(item: KpiItem, response: KpiResponse, is_manager: bool = False) -> float:
     cfg = item_config(item)
     meta = cfg["meta"]
@@ -235,15 +267,10 @@ def calculate_item_score(item: KpiItem, response: KpiResponse, is_manager: bool 
             return 0.0
         actual = float(actual_val)
 
-        # Current KRA-average model: employee/manager enters a direct score from
-        # 0 to 100. It is zeroed only when it is below the configured minimum.
         if meta.get("scoring_model") == KRA_AVERAGE_100_MODEL:
-            if not _threshold_gate(item, actual):
-                return 0.0
-            score_pct = max(0.0, min(actual, 100.0))
-            return _round_item_mark(item, float(item.weight) * score_pct / 100.0)
+            score_100 = calculate_kpi_score_100(item, response, is_manager=is_manager)
+            return _round_item_mark(item, float(item.weight) * score_100 / 100.0)
 
-        # Legacy hard-threshold behavior is retained for historical templates.
         if not _threshold_gate(item, actual):
             return 0.0
 
@@ -273,6 +300,9 @@ def calculate_item_score(item: KpiItem, response: KpiResponse, is_manager: bool 
         return _round_item_mark(item, float(item.weight) * ratio)
 
     if item.input_type in {"choice", "yesno"}:
+        if meta.get("scoring_model") == KRA_AVERAGE_100_MODEL:
+            score_100 = calculate_kpi_score_100(item, response, is_manager=is_manager)
+            return _round_item_mark(item, float(item.weight) * score_100 / 100.0)
         selected = response.manager_selected_option if is_manager else response.selected_option
         if not selected:
             return 0.0
@@ -332,22 +362,50 @@ def recalc_assignment(db: Session, assignment_id: int) -> float:
     assignment = db.scalar(
         select(KpiAssignment)
         .where(KpiAssignment.id == assignment_id)
-        .options(joinedload(KpiAssignment.responses).joinedload(KpiResponse.item))
+        .options(
+            joinedload(KpiAssignment.responses).joinedload(KpiResponse.item),
+            joinedload(KpiAssignment.template).joinedload(KpiTemplate.kras).joinedload(Kra.items),
+        )
     )
     if not assignment:
         return 0.0
+
+    response_map = {response.kpi_item_id: response for response in assignment.responses}
     total = 0.0
     manager_total = 0.0
     has_manager_input = False
     uses_kra_average = False
-    for response in assignment.responses:
-        response.score = calculate_item_score(response.item, response, is_manager=False)
-        manager_present = response.manager_actual_numeric is not None or bool(response.manager_selected_option)
-        response.manager_score = calculate_item_score(response.item, response, is_manager=True) if manager_present else 0.0
-        total += response.score
-        manager_total += response.manager_score
-        has_manager_input = has_manager_input or manager_present
-        uses_kra_average = uses_kra_average or _uses_kra_average_100(response.item)
+
+    for kra in assignment.template.kras:
+        current_model = bool(kra.items) and all(_uses_kra_average_100(item) for item in kra.items)
+        if current_model:
+            uses_kra_average = True
+            share = float(kra.weight or 0) / len(kra.items)
+            for item in kra.items:
+                response = response_map.get(item.id)
+                if not response:
+                    continue
+                staff_kpi = calculate_kpi_score_100(item, response, is_manager=False)
+                response.score = share * staff_kpi / 100.0
+                total += response.score
+
+                manager_present = response.manager_actual_numeric is not None or bool(response.manager_selected_option)
+                response.manager_score = share * calculate_kpi_score_100(item, response, is_manager=True) / 100.0 if manager_present else 0.0
+                manager_total += response.manager_score
+                has_manager_input = has_manager_input or manager_present
+            continue
+
+        for item in kra.items:
+            response = response_map.get(item.id)
+            if not response:
+                continue
+            response.score = calculate_item_score(item, response, is_manager=False)
+            manager_present = response.manager_actual_numeric is not None or bool(response.manager_selected_option)
+            response.manager_score = calculate_item_score(item, response, is_manager=True) if manager_present else 0.0
+            total += response.score
+            manager_total += response.manager_score
+            has_manager_input = has_manager_input or manager_present
+            uses_kra_average = uses_kra_average or _uses_kra_average_100(item)
 
     if uses_kra_average:
         assignment.calculated_score = float(round(min(total, 100.0), 2))

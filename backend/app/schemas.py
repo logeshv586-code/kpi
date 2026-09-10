@@ -87,7 +87,7 @@ class KpiItemIn(BaseModel):
 
 class KraIn(BaseModel):
     name: str = Field(min_length=2)
-    weight: float = Field(ge=0, le=100)
+    weight: int = Field(ge=0, le=100)
     items: list[KpiItemIn]
 
 
@@ -143,10 +143,10 @@ class AutoAssignIn(BaseModel):
 
 class ResponseIn(BaseModel):
     kpi_item_id: int
-    actual_numeric: float | None = None
+    actual_numeric: int | None = None
     answer_text: str | None = None
     selected_option: str | None = None
-    manager_actual_numeric: float | None = None
+    manager_actual_numeric: int | None = None
     manager_selected_option: str | None = None
     measurement: str | None = None
     remarks: str | None = None
