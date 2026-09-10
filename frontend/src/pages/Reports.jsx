@@ -23,13 +23,105 @@ export default function Reports(){
   const periods=useMemo(()=>[...(data?.periods||[])].sort((a,b)=>String(a.month).localeCompare(String(b.month))||(typeOrder[a.review_type]??99)-(typeOrder[b.review_type]??99)),[data])
   const financialYears=useMemo(()=>[...new Set(periods.map(p=>p.financial_year).filter(Boolean))].sort().reverse(),[periods])
   useEffect(()=>{if(!financialYear&&financialYears.length)setFinancialYear(financialYears[0])},[financialYears,financialYear])
-  const availableTypes=useMemo(()=>[...new Set(periods.filter(p=>!financialYear||p.financial_year===financialYear).map(p=>p.review_type))].sort((a,b)=>(typeOrder[a]??99)-(typeOrder[b]??99)),[periods,financialYear])
-  useEffect(()=>{if(availableTypes.length&&!availableTypes.includes(reviewType)){setReviewType(availableTypes[0]);setPeriodKey('all')}},[availableTypes,reviewType])
-  const filteredPeriods=useMemo(()=>periods.filter(p=>p.review_type===reviewType&&(!financialYear||p.financial_year===financialYear)),[periods,reviewType,financialYear])
-  useEffect(()=>{if(periodKey!=='all'&&!filteredPeriods.some(p=>p.key===periodKey))setPeriodKey('all')},[filteredPeriods,periodKey])
-  const selectedPeriods=useMemo(()=>periodKey==='all'?filteredPeriods:filteredPeriods.filter(p=>p.key===periodKey),[filteredPeriods,periodKey])
-  const selectedKeys=useMemo(()=>new Set(selectedPeriods.map(p=>p.key)),[selectedPeriods])
-  const selectedPeriodLabel=periodKey==='all'?`All ${typeLabel[reviewType]||reviewType} · ${financialYear||'All FY'}`:(selectedPeriods[0]?.label||'Selected period')
+  const availableTypes = ['monthly', 'quarterly', 'half_yearly', 'annual']
+
+  const quarterMonths = {
+    'Q1 (Apr–Jun)': [4, 5, 6],
+    'Q2 (Jul–Sep)': [7, 8, 9],
+    'Q3 (Oct–Dec)': [10, 11, 12],
+    'Q4 (Jan–Mar)': [1, 2, 3]
+  }
+
+  const halfYearMonths = {
+    'H1 (Apr–Sep)': [4, 5, 6, 7, 8, 9],
+    'H2 (Oct–Mar)': [10, 11, 12, 1, 2, 3]
+  }
+
+  const filteredPeriods = useMemo(() => {
+    return periods.filter(p => !financialYear || p.financial_year === financialYear)
+  }, [periods, financialYear])
+
+  const periodOptions = useMemo(() => {
+    if (reviewType === 'monthly') {
+      const monthPeriods = filteredPeriods.filter(p => p.review_type === 'monthly')
+      return monthPeriods.map(p => ({ key: p.key, label: p.label || p.name, keys: [p.key] }))
+    }
+
+    if (reviewType === 'quarterly') {
+      return Object.entries(quarterMonths).map(([qLabel, months]) => {
+        const matching = filteredPeriods.filter(p => {
+          const m = Number(String(p.month || '').slice(5, 7))
+          if (p.review_type === 'quarterly') {
+            return (qLabel.startsWith('Q1') && m === 6) ||
+                   (qLabel.startsWith('Q2') && m === 9) ||
+                   (qLabel.startsWith('Q3') && m === 12) ||
+                   (qLabel.startsWith('Q4') && m === 3)
+          }
+          return months.includes(m)
+        })
+        return {
+          key: qLabel,
+          label: `${qLabel} · ${financialYear || 'FY'}`,
+          keys: matching.map(p => p.key)
+        }
+      })
+    }
+
+    if (reviewType === 'half_yearly') {
+      return Object.entries(halfYearMonths).map(([hLabel, months]) => {
+        const matching = filteredPeriods.filter(p => {
+          const m = Number(String(p.month || '').slice(5, 7))
+          if (p.review_type === 'half_yearly') {
+            return (hLabel.startsWith('H1') && m === 9) ||
+                   (hLabel.startsWith('H2') && m === 3)
+          }
+          return months.includes(m)
+        })
+        return {
+          key: hLabel,
+          label: `${hLabel} · ${financialYear || 'FY'}`,
+          keys: matching.map(p => p.key)
+        }
+      })
+    }
+
+    if (reviewType === 'annual') {
+      return [{
+        key: 'annual_full',
+        label: `Annual (Apr–Mar) · ${financialYear || 'FY'}`,
+        keys: filteredPeriods.map(p => p.key)
+      }]
+    }
+
+    return []
+  }, [reviewType, filteredPeriods, financialYear])
+
+  useEffect(() => {
+    if (periodKey !== 'all' && !periodOptions.some(p => p.key === periodKey)) {
+      setPeriodKey('all')
+    }
+  }, [periodOptions, periodKey])
+
+  const selectedKeys = useMemo(() => {
+    if (periodKey === 'all') {
+      if (reviewType === 'monthly') {
+        return new Set(filteredPeriods.filter(p => p.review_type === 'monthly').map(p => p.key))
+      }
+      const allOptionKeys = periodOptions.flatMap(opt => opt.keys)
+      return new Set(allOptionKeys)
+    }
+    const found = periodOptions.find(p => p.key === periodKey)
+    return new Set(found ? found.keys : [])
+  }, [periodKey, reviewType, filteredPeriods, periodOptions])
+
+  const selectedPeriodLabel = useMemo(() => {
+    if (periodKey === 'all') {
+      return `All ${typeLabel[reviewType] || reviewType} · ${financialYear || 'All FY'}`
+    }
+    const found = periodOptions.find(p => p.key === periodKey)
+    return found ? found.label : 'Selected period'
+  }, [periodKey, reviewType, financialYear, periodOptions])
+
   const departments=useMemo(()=>['All',...new Set((data?.rows||[]).map(r=>r.department).filter(Boolean))].sort((a,b)=>a==='All'?-1:b==='All'?1:a.localeCompare(b)),[data])
 
   const rows=useMemo(()=>{
@@ -64,7 +156,7 @@ export default function Reports(){
   function bandClass(band){if(band==='Outstanding')return'status-finalized';if(band==='Very Good'||band==='Good')return'status-manager_reviewed';if(band==='Needs Improvement')return'status-submitted';return'status-draft'}
 
   return<>
-    <PageHeader title={title} subtitle={subtitle} actions={<div className="report-actions responsive-actions"><select value={financialYear} onChange={e=>{setFinancialYear(e.target.value);setPeriodKey('all')}} aria-label="Financial year">{financialYears.map(fy=><option key={fy} value={fy}>{fy}</option>)}</select><select value={reviewType} onChange={e=>{setReviewType(e.target.value);setPeriodKey('all')}} aria-label="Review type">{availableTypes.map(type=><option key={type} value={type}>{typeLabel[type]||type}</option>)}</select><select value={periodKey} onChange={e=>setPeriodKey(e.target.value)} aria-label="Review period"><option value="all">All periods</option>{filteredPeriods.map(p=><option key={p.key} value={p.key}>{p.label}</option>)}</select>{departments.length>2?<select value={department} onChange={e=>setDepartment(e.target.value)} aria-label="Department"><option value="All">All departments</option>{departments.filter(d=>d!=='All').map(d=><option key={d}>{d}</option>)}</select>:null}<button className="secondary" onClick={exportCsv}><Download size={16}/>Export CSV</button></div>}/>
+    <PageHeader title={title} subtitle={subtitle} actions={<div className="report-actions responsive-actions"><select value={financialYear} onChange={e=>{setFinancialYear(e.target.value);setPeriodKey('all')}} aria-label="Financial year">{financialYears.map(fy=><option key={fy} value={fy}>{fy}</option>)}</select><select value={reviewType} onChange={e=>{setReviewType(e.target.value);setPeriodKey('all')}} aria-label="Review type">{availableTypes.map(type=><option key={type} value={type}>{typeLabel[type]||type}</option>)}</select><select value={periodKey} onChange={e=>setPeriodKey(e.target.value)} aria-label="Review period"><option value="all">All periods</option>{periodOptions.map(p=><option key={p.key} value={p.key}>{p.label}</option>)}</select>{departments.length>2?<select value={department} onChange={e=>setDepartment(e.target.value)} aria-label="Department"><option value="All">All departments</option>{departments.filter(d=>d!=='All').map(d=><option key={d}>{d}</option>)}</select>:null}<button className="secondary" onClick={exportCsv}><Download size={16}/>Export CSV</button></div>}/>
     <ErrorBox error={error}/>
     {!data?<Loader/>:<>
       <div className="helper-strip" style={{marginBottom:'14px'}}><strong>Report:</strong> {selectedPeriodLabel} · April–March financial year · scores rounded to whole integers.</div>
