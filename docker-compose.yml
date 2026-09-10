@@ -15,6 +15,12 @@ services:
 
   backend:
     build: ./backend
+    # Optional local/deployment secrets. This makes the SMTP gateway configured
+    # in backend/.env available inside the container without baking secrets into
+    # the image. Explicit environment entries below still take precedence.
+    env_file:
+      - path: ./backend/.env
+        required: false
     environment:
       DATABASE_URL: postgresql+psycopg2://kpi:eagle123@db:5432/kpi_db
       SECRET_KEY: dev-docker-secret-change-this-to-a-long-random-value
