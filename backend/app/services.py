@@ -11,6 +11,7 @@ from .models import AuditLog, KpiAssignment, KpiItem, KpiResponse, KpiTemplate, 
 NUMERIC_INPUT_TYPES = {"percentage", "number", "currency", "days", "count"}
 THRESHOLD_RULES = {"none", "minimum", "maximum", "range"}
 KRA_AVERAGE_100_MODEL = "kra_average_100"
+MEASUREMENT_TARGET_METHOD = "measurement_target"
 
 
 def audit(db: Session, actor_id: int | None, action: str, entity_type: str, entity_id: int | None = None, details: dict | None = None):
@@ -29,9 +30,10 @@ def _optional_float(value: Any) -> float | None:
 def item_config(item: KpiItem) -> dict[str, Any]:
     """Return normalized KPI configuration.
 
-    Current templates use the spreadsheet model: every KPI is scored out of 100,
-    only a minimum qualifying score is configurable, and KRAs apply the weight.
-    Legacy min/max/range metadata remains readable for historical templates.
+    Current templates keep every KPI at 100 marks. Numeric KPIs can measure an
+    operational value (count, currency, percentage, days/time, or number), map
+    actual vs target to marks /100, and optionally apply one qualifying value.
+    Older direct-score and legacy threshold templates remain readable.
     """
     raw = item.options or {}
     if not isinstance(raw, dict):
@@ -46,16 +48,31 @@ def item_config(item: KpiItem) -> dict[str, Any]:
 
     scoring_model = str(meta.get("scoring_model") or "").strip().lower()
     if scoring_model == KRA_AVERAGE_100_MODEL:
-        minimum_score = _optional_float(meta.get("minimum_score"))
-        if minimum_score is None:
-            minimum_score = _optional_float(meta.get("threshold_min"))
-        minimum_score = 0.0 if minimum_score is None else minimum_score
+        scoring_method = str(meta.get("scoring_method") or "direct_score_100").strip().lower()
         meta["scoring_model"] = KRA_AVERAGE_100_MODEL
+        meta["scoring_method"] = scoring_method
         meta["score_base"] = 100
-        meta["minimum_score"] = minimum_score
-        meta["threshold_rule"] = "minimum" if minimum_score > 0 else "none"
-        meta["threshold_min"] = minimum_score
-        meta["threshold_max"] = None
+        meta["marks"] = 100
+
+        if scoring_method == MEASUREMENT_TARGET_METHOD:
+            qualifying_value = _optional_float(meta.get("qualifying_value"))
+            meta["qualifying_value"] = 0.0 if qualifying_value is None else qualifying_value
+            meta["qualification_direction"] = "lower" if item.direction == "lower" else "higher"
+            meta["unit"] = str(meta.get("unit") or "").strip()
+            meta["minimum_score"] = 0
+            # Qualifying value is a business measurement, not the old score threshold.
+            meta["threshold_rule"] = "none"
+            meta["threshold_min"] = None
+            meta["threshold_max"] = None
+        else:
+            minimum_score = _optional_float(meta.get("minimum_score"))
+            if minimum_score is None:
+                minimum_score = _optional_float(meta.get("threshold_min"))
+            minimum_score = 0.0 if minimum_score is None else minimum_score
+            meta["minimum_score"] = minimum_score
+            meta["threshold_rule"] = "minimum" if minimum_score > 0 else "none"
+            meta["threshold_min"] = minimum_score
+            meta["threshold_max"] = None
     else:
         threshold_min = _optional_float(meta.get("threshold_min"))
         threshold_max = _optional_float(meta.get("threshold_max"))
@@ -86,9 +103,8 @@ def _uses_kra_average_100(item: KpiItem) -> bool:
 
 
 def _round_item_mark(item: KpiItem, value: float) -> float:
-    # New-model contributions remain unrounded until the KRA/final total is
-    # calculated. This prevents 3 or 7 KPI KRAs losing points through row-level
-    # rounding. Legacy templates retain their historical whole-mark behavior.
+    # Current-model contributions remain unrounded until KRA/final aggregation.
+    # Employee inputs and calculated KPI marks are still whole integers.
     return float(value) if _uses_kra_average_100(item) else float(round(value))
 
 
@@ -131,12 +147,28 @@ def validate_template(template: KpiTemplate, strict: bool = True) -> tuple[bool,
             rule = meta.get("threshold_rule", "none")
 
             if meta.get("scoring_model") == KRA_AVERAGE_100_MODEL:
-                if minimum is None or not 0 <= float(minimum) <= 100:
-                    return False, f"KPI '{item.question}' minimum qualifying score must be between 0 and 100"
-                if not float(minimum).is_integer():
-                    return False, f"KPI '{item.question}' minimum qualifying score must be a whole number"
                 if int(meta.get("score_base", 100)) != 100:
                     return False, f"KPI '{item.question}' score base must be 100"
+
+                if meta.get("scoring_method") == MEASUREMENT_TARGET_METHOD:
+                    if item.input_type not in NUMERIC_INPUT_TYPES:
+                        return False, f"KPI '{item.question}' has an invalid measurement type"
+                    target = _optional_float(item.target_value)
+                    qualifier = _optional_float(meta.get("qualifying_value"))
+                    qualifier = 0.0 if qualifier is None else qualifier
+                    if target is None or target <= 0 or not float(target).is_integer():
+                        return False, f"KPI '{item.question}' target for 100 marks must be a positive whole number"
+                    if qualifier < 0 or not float(qualifier).is_integer():
+                        return False, f"KPI '{item.question}' qualifying value must be 0 or a positive whole number"
+                    if not str(meta.get("unit") or "").strip():
+                        return False, f"KPI '{item.question}' requires a unit"
+                else:
+                    minimum_score = _optional_float(meta.get("minimum_score"))
+                    minimum_score = 0.0 if minimum_score is None else minimum_score
+                    if not 0 <= minimum_score <= 100:
+                        return False, f"KPI '{item.question}' minimum qualifying score must be between 0 and 100"
+                    if not float(minimum_score).is_integer():
+                        return False, f"KPI '{item.question}' minimum qualifying score must be a whole number"
             else:
                 if minimum is not None and maximum is not None and minimum > maximum:
                     return False, f"KPI '{item.question}' minimum threshold cannot be greater than maximum threshold"
@@ -162,8 +194,8 @@ def validate_template(template: KpiTemplate, strict: bool = True) -> tuple[bool,
                         score_value = float(score)
                     except (TypeError, ValueError):
                         return False, f"KPI '{item.question}' has an invalid score for result '{label}'"
-                    if score_value < 0 or score_value > 100:
-                        return False, f"KPI '{item.question}' result '{label}' score must be between 0 and 100"
+                    if score_value < 0 or score_value > 100 or not score_value.is_integer():
+                        return False, f"KPI '{item.question}' result '{label}' marks must be a whole number from 0 to 100"
     return True, "OK"
 
 
@@ -184,9 +216,37 @@ def _threshold_score_pct(actual: float, thresholds: list[dict], direction: str) 
 
 
 def threshold_status(item: KpiItem, actual: float | None) -> dict[str, Any]:
-    """Return minimum/legacy-threshold pass information for measurable KPIs."""
+    """Return qualification/legacy-threshold pass information."""
     cfg = item_config(item)
     meta = cfg["meta"]
+
+    if meta.get("scoring_model") == KRA_AVERAGE_100_MODEL and meta.get("scoring_method") == MEASUREMENT_TARGET_METHOD:
+        qualifier = float(meta.get("qualifying_value", 0) or 0)
+        direction = "lower" if item.direction == "lower" else "higher"
+        rule = "none" if qualifier <= 0 else ("maximum" if direction == "lower" else "minimum")
+        minimum = qualifier if rule == "minimum" else None
+        maximum = qualifier if rule == "maximum" else None
+        if actual is None or item.input_type not in NUMERIC_INPUT_TYPES:
+            return {"rule": rule, "minimum": minimum, "maximum": maximum, "passed": None, "status": "not_completed"}
+        value = float(actual)
+        if qualifier <= 0:
+            passed = True
+            reason = "No qualification gate"
+        elif direction == "lower":
+            passed = value <= qualifier
+            reason = "Qualification achieved" if passed else f"Must be {qualifier:g} or lower"
+        else:
+            passed = value >= qualifier
+            reason = "Qualification achieved" if passed else f"Must be {qualifier:g} or higher"
+        return {
+            "rule": rule,
+            "minimum": minimum,
+            "maximum": maximum,
+            "passed": passed,
+            "status": "achieved" if passed else "not_achieved",
+            "reason": reason,
+        }
+
     rule = meta.get("threshold_rule", "none")
     minimum = _optional_float(meta.get("threshold_min"))
     maximum = _optional_float(meta.get("threshold_max"))
@@ -227,7 +287,7 @@ def _threshold_gate(item: KpiItem, actual: float) -> bool:
 
 
 def calculate_kpi_score_100(item: KpiItem, response: KpiResponse, is_manager: bool = False) -> int:
-    """Return the displayed whole-number KPI score before KRA weighting."""
+    """Return the whole-number KPI mark before KRA weighting."""
     cfg = item_config(item)
     meta = cfg["meta"]
 
@@ -244,9 +304,24 @@ def calculate_kpi_score_100(item: KpiItem, response: KpiResponse, is_manager: bo
     actual_val = response.manager_actual_numeric if is_manager else response.actual_numeric
     if actual_val is None:
         return 0
-    actual = float(actual_val)
+    actual = max(0.0, float(actual_val))
 
     if meta.get("scoring_model") == KRA_AVERAGE_100_MODEL:
+        if meta.get("scoring_method") == MEASUREMENT_TARGET_METHOD:
+            if not _threshold_gate(item, actual):
+                return 0
+            target = float(item.target_value or 0)
+            if item.direction == "lower":
+                if actual <= target:
+                    pct = 100.0
+                elif actual <= 0:
+                    pct = 100.0
+                else:
+                    pct = (target / actual * 100.0) if target > 0 else 0.0
+            else:
+                pct = (actual / target * 100.0) if target > 0 else (100.0 if actual > 0 else 0.0)
+            return int(round(max(0.0, min(100.0, pct))))
+
         if not _threshold_gate(item, actual):
             return 0
         return int(round(max(0.0, min(actual, 100.0))))
@@ -320,9 +395,13 @@ def calculate_item_score(item: KpiItem, response: KpiResponse, is_manager: bool 
 
 
 def calculate_achievement_percent(item: KpiItem, response: KpiResponse, is_manager: bool = False) -> int:
-    """Return the KPI's independent 0-100 achievement score."""
+    """Return the KPI's whole-number mark/achievement out of 100."""
     cfg = item_config(item)
     meta = cfg["meta"]
+
+    if meta.get("scoring_model") == KRA_AVERAGE_100_MODEL:
+        return calculate_kpi_score_100(item, response, is_manager=is_manager)
+
     if item.input_type in {"choice", "yesno"}:
         selected = response.manager_selected_option if is_manager else response.selected_option
         return int(round(float(cfg["score_map"].get(selected, 0)))) if selected else 0
@@ -331,11 +410,6 @@ def calculate_achievement_percent(item: KpiItem, response: KpiResponse, is_manag
     if actual_val is None:
         return 0
     actual = float(actual_val)
-
-    if meta.get("scoring_model") == KRA_AVERAGE_100_MODEL:
-        if not _threshold_gate(item, actual):
-            return 0
-        return int(round(max(0.0, min(actual, 100.0))))
 
     if item.input_type == "percentage" and item.target_value is None:
         return int(round(max(0.0, actual)))
