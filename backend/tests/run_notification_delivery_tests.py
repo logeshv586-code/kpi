@@ -39,6 +39,9 @@ def fake_send_email(to_email: str, subject: str, body: str) -> bool:
     return True
 
 
+# Seed once, then use a fresh SQLAlchemy session for each reminder execution.
+# That matches the production scheduler, which creates a new SessionLocal on
+# each hourly pass, and verifies that idempotency is persisted in the database.
 with SessionLocal() as db:
     template = KpiTemplate(name="Reminder Test Template", status=TemplateStatus.active)
     pending_employee = User(
@@ -83,24 +86,33 @@ with SessionLocal() as db:
         status=AssignmentStatus.submitted,
     )
     db.add_all([pending_assignment, completed_assignment])
+    db.flush()
+    pending_assignment_id = pending_assignment.id
     db.commit()
 
-    with patch("app.routers.kpi_v2_enhancements.send_email", side_effect=fake_send_email):
+with patch("app.routers.kpi_v2_enhancements.send_email", side_effect=fake_send_email):
+    with SessionLocal() as db:
         first = run_due_notifications(db, date(2026, 9, 26))
         assert first["pending"] == 1
         assert first["employee_emails"] == 1
         assert sent_to == ["pending@example.com"]
 
-        # Re-running the scheduler on the same date must not duplicate the alert.
+    # Re-running the scheduler on the same date must not duplicate the alert.
+    with SessionLocal() as db:
         second = run_due_notifications(db, date(2026, 9, 26))
         assert second["pending"] == 1
         assert second["employee_emails"] == 0
         assert sent_to == ["pending@example.com"]
 
-        # Once the employee submits, later days in the 26th-to-1st window must
-        # stop sending reminders automatically.
+    # Once the employee submits, later days in the 26th-to-1st window must
+    # stop sending reminders automatically.
+    with SessionLocal() as db:
+        pending_assignment = db.get(KpiAssignment, pending_assignment_id)
+        assert pending_assignment is not None
         pending_assignment.status = AssignmentStatus.submitted
         db.commit()
+
+    with SessionLocal() as db:
         third = run_due_notifications(db, date(2026, 9, 27))
         assert third["pending"] == 0
         assert third["employee_emails"] == 0
@@ -108,5 +120,5 @@ with SessionLocal() as db:
 
 print("PASS: only active employees with not_started/draft KPI receive reminders")
 print("PASS: submitted/completed employees receive no reminder")
-print("PASS: same-day duplicate reminder is suppressed")
+print("PASS: same-day duplicate reminder is suppressed across scheduler runs")
 print("ALL KPI NOTIFICATION DELIVERY TESTS PASSED")
