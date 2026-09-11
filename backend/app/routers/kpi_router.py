@@ -481,7 +481,10 @@ def publish(template_id: int, db: Session = Depends(get_db), user=Depends(requir
         old.status = TemplateStatus.archived
     t.status = TemplateStatus.active
     audit(db, user.id, "publish", "kpi_template", t.id, {"version": t.version, "archived_versions": [x.id for x in previous]})
-    
+    # SessionLocal uses autoflush=False. Persist the active/archived status
+    # transition before querying active templates for assignment refresh.
+    db.flush()
+
     # Keep employee-level overrides on the new version when it supersedes an
     # older version of the same scoped template.
     previous_ids = [old.id for old in previous]
