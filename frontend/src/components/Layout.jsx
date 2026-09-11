@@ -1,7 +1,7 @@
 import {NavLink, useNavigate} from 'react-router-dom'
-import {BarChart3, CircleAlert, FileInput, FileSpreadsheet, HelpCircle, KeyRound, LogOut, Network, Settings as SettingsIcon, Users, Menu} from 'lucide-react'
+import {BarChart3, FileInput, FileSpreadsheet, HelpCircle, KeyRound, LogOut, Network, Settings as SettingsIcon, Users, Menu} from 'lucide-react'
 import {canAccessTab, useAuth} from '../lib/auth'
-import {useEffect, useState} from 'react'
+import {useState} from 'react'
 import {api, getError} from '../lib/api'
 import {ErrorBox, Modal} from './UI'
 
@@ -23,22 +23,6 @@ export default function Layout({children}) {
   const [passwordMessage, setPasswordMessage] = useState('')
   const [passwordFieldErrors, setPasswordFieldErrors] = useState({})
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
-  const [emailHealth,setEmailHealth]=useState(null)
-
-  useEffect(()=>{
-    if(!['superadmin','hr'].includes(user?.role))return
-    let active=true
-    api.get('/admin/email-health?live=true')
-      .then(({data})=>{if(active)setEmailHealth(data)})
-      .catch(error=>{
-        if(!active)return
-        const detail=error?.response?.data?.detail
-        setEmailHealth({ok:false,message:typeof detail==='string'?detail:'Unable to verify the KPI email connection. Open Settings and test the email gateway.'})
-      })
-    const onHealth=event=>setEmailHealth(event.detail||null)
-    window.addEventListener('kpi-email-health',onHealth)
-    return()=>{active=false;window.removeEventListener('kpi-email-health',onHealth)}
-  },[user?.role])
 
   function help() {
     localStorage.removeItem('kpi_guide_dismissed')
@@ -121,13 +105,7 @@ export default function Layout({children}) {
             <div className="avatar small">{user?.name?.slice(0, 1)}</div>
           </div>
         </header>
-        <div className="content">
-          {['superadmin','hr'].includes(user?.role)&&emailHealth?.ok===false?<div className="locked-note" style={{marginBottom:'14px',display:'flex',alignItems:'center',justifyContent:'space-between',gap:'12px'}}>
-            <span style={{display:'flex',alignItems:'center',gap:'8px'}}><CircleAlert size={17}/><span><strong>Email alerts need attention.</strong> {emailHealth.message||'The SMTP connection is not valid.'}</span></span>
-            <button className="secondary small" onClick={()=>nav('/settings')}>Update Email Settings</button>
-          </div>:null}
-          {children}
-        </div>
+        <div className="content">{children}</div>
       </main>
       {passwordOpen ? <Modal title="Change password" onClose={() => setPasswordOpen(false)} actions={<><button className="secondary" onClick={() => setPasswordOpen(false)}>Cancel</button><button className="primary" onClick={changePassword}>Save password</button></>}>
         <p className="small-copy muted">Enter your temporary/current password, then choose the password you will use for future sign-ins.</p>
