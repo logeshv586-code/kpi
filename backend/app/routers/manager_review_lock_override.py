@@ -49,14 +49,32 @@ def locked_relationship_get_assignment(
     user: User = Depends(get_current_user),
 ):
     data = review.relationship_get_assignment(assignment_id, db, user)
-    is_finalized = data.get("status") == AssignmentStatus.finalized.value
-    if is_finalized and not review._is_superadmin(user):
+    status = data.get("status")
+    superadmin = review._is_superadmin(user)
+    is_finalized = status == AssignmentStatus.finalized.value
+    review_status_ok = status in {
+        AssignmentStatus.submitted.value,
+        AssignmentStatus.manager_reviewed.value,
+    } or (superadmin and is_finalized)
+
+    if is_finalized and not superadmin:
         data["can_edit_manager_score"] = False
-        data["manager_review_submitted"] = True
     else:
         cycle_open = not data.get("is_locked") and data.get("cycle_status") != "closed"
-        data["can_edit_manager_score"] = bool(data.get("can_review") and (review._is_superadmin(user) or cycle_open))
-        data["manager_review_submitted"] = (data.get("status") == AssignmentStatus.manager_reviewed.value)
+        data["can_edit_manager_score"] = bool(
+            data.get("can_review")
+            and review_status_ok
+            and (superadmin or cycle_open)
+        )
+
+    data["manager_review_submitted"] = status in {
+        AssignmentStatus.manager_reviewed.value,
+        AssignmentStatus.finalized.value,
+    }
+    data["can_return_to_employee"] = bool(
+        status in {AssignmentStatus.submitted.value, AssignmentStatus.manager_reviewed.value}
+        and (superadmin or data.get("manager_id") == user.id)
+    )
     return data
 
 
