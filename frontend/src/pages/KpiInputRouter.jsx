@@ -5,6 +5,7 @@ import {api,getError} from '../lib/api'
 import {useAuth} from '../lib/auth'
 import {Card,ErrorBox,Loader,PageHeader,Status} from '../components/UI'
 import {assignmentDepartment,compareText} from '../lib/sorting'
+import {chooseDefaultReviewPeriod} from '../lib/reviewPeriodSelection'
 import KpiInputV2 from './KpiInputV2'
 import {
   whole,scoreText,isChoice,isKraAverage100,isMeasurementTarget,measurementLabels,metricUnit,
@@ -82,8 +83,17 @@ function ReviewerWorkspace({initialList,onListChange}){
   const personId=current?String(current.employee_id):''
   const personRows=useMemo(()=>departmentRows.filter(row=>String(row.employee_id)===personId).sort((a,b)=>String(b.month||'').localeCompare(String(a.month||''))||String(b.id).localeCompare(String(a.id))),[departmentRows,personId])
 
-  function selectDepartment(value){const first=(list||[]).filter(row=>assignmentDepartment(row)===value).sort((a,b)=>compareText(a.employee,b.employee))[0];if(first)setParams({assignment:first.id})}
-  function selectPerson(value){const first=departmentRows.find(row=>String(row.employee_id)===String(value));if(first)setParams({assignment:first.id})}
+  function selectDepartment(value){
+    const candidates=(list||[]).filter(row=>assignmentDepartment(row)===value).sort((a,b)=>compareText(a.employee,b.employee))
+    if(!candidates.length)return
+    const employeeId=String(candidates[0].employee_id)
+    const preferred=chooseDefaultReviewPeriod(candidates.filter(row=>String(row.employee_id)===employeeId))
+    if(preferred)setParams({assignment:preferred.id})
+  }
+  function selectPerson(value){
+    const preferred=chooseDefaultReviewPeriod(departmentRows.filter(row=>String(row.employee_id)===String(value)))
+    if(preferred)setParams({assignment:preferred.id})
+  }
   function selectPeriod(value){if(value)setParams({assignment:value})}
 
   const items=useMemo(()=>assignment?assignment.template.kras.flatMap(kra=>kra.items):[],[assignment])
@@ -166,7 +176,18 @@ export default function KpiInputRouter(){
   const{user}=useAuth(),[params,setParams]=useSearchParams(),[list,setList]=useState(null),[error,setError]=useState(''),id=params.get('assignment')
   const reviewerUser=['manager','superadmin','hr'].includes(user?.role)||Boolean(user?.is_reporting_manager)
   useEffect(()=>{api.get('/kpi/my').then(({data})=>setList(data)).catch(e=>setError(getError(e)))},[])
-  useEffect(()=>{if(!list?.length||id)return;const preferred=list.find(row=>String(row.employee_id)===String(user?.id))||list[0];if(preferred)setParams({assignment:preferred.id},{replace:true})},[list,id,user?.id,setParams])
+  useEffect(()=>{
+    if(!list?.length||id)return
+    const selfRows=list.filter(row=>String(row.employee_id)===String(user?.id))
+    let candidates=selfRows
+    if(!candidates.length){
+      const sorted=[...list].sort((a,b)=>compareText(a.employee,b.employee))
+      const firstEmployeeId=sorted[0]?.employee_id
+      candidates=sorted.filter(row=>String(row.employee_id)===String(firstEmployeeId))
+    }
+    const preferred=chooseDefaultReviewPeriod(candidates)
+    if(preferred)setParams({assignment:preferred.id},{replace:true})
+  },[list,id,user?.id,setParams])
   if(error)return<ErrorBox error={error}/>
   if(!list)return<Loader/>
   if(!reviewerUser)return<KpiInputV2/>
