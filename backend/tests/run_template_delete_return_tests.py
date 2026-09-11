@@ -37,8 +37,9 @@ from app.models import (
 from app.routers import kpi_router as kpi_router_module
 from app.routers.kpi_router import _purge_template_dependencies
 from app.routers.kpi_v2_enhancements import _dashboard_visible_assignments
+from app.routers import manager_review_lock_override as review_lock
 from app.routers.relationship_review_override import _complete_manager_review, _load_assignment
-from app.schemas import ReviewIn
+from app.schemas import ResponseIn, ReviewIn
 
 # Notifications are best-effort workflow side effects; keep this regression test
 # isolated from SMTP/network configuration.
@@ -241,6 +242,58 @@ try:
     except HTTPException as exc:
         assert exc.status_code == 403
 
+    # Once Manager Review is submitted, Manager/HR cannot change the score again.
+    locked_cycle.is_locked = False
+    submitted_row = db.get(KpiAssignment, submitted.id)
+    submitted_row.status = AssignmentStatus.submitted
+    response_row = db.scalar(select(KpiResponse).where(KpiResponse.assignment_id == submitted.id))
+    response_row.manager_actual_numeric = 80
+    db.commit()
+
+    loaded = _load_assignment(db, submitted.id)
+    approved = _complete_manager_review(
+        loaded,
+        ReviewIn(decision="approved", comments="Manager Score submitted"),
+        db,
+        manager,
+    )
+    assert approved["manager_score"] == 80
+    assert db.get(KpiAssignment, submitted.id).status == AssignmentStatus.manager_reviewed
+    assert review_lock._review_already_submitted(_load_assignment(db, submitted.id), manager) is True
+    assert review_lock._review_already_submitted(_load_assignment(db, submitted.id), hr) is True
+    assert review_lock._review_already_submitted(_load_assignment(db, submitted.id), admin) is False
+
+    try:
+        review_lock.locked_relationship_save_responses(
+            submitted.id,
+            [ResponseIn(kpi_item_id=active_item.id, manager_actual_numeric=90)],
+            db,
+            manager,
+        )
+        raise AssertionError("Manager must not be able to change Manager Score after submission")
+    except HTTPException as exc:
+        assert exc.status_code == 409
+
+    try:
+        review_lock.locked_relationship_manager_review(
+            submitted.id,
+            ReviewIn(decision="approved", comments="Second manager submission"),
+            db,
+            manager,
+        )
+        raise AssertionError("Manager must not be able to submit Manager Review twice")
+    except HTTPException as exc:
+        assert exc.status_code == 409
+
+    # Super Admin remains the only role allowed to update the submitted Manager Score.
+    admin_update = review_lock.locked_relationship_save_responses(
+        submitted.id,
+        [ResponseIn(kpi_item_id=active_item.id, manager_actual_numeric=90)],
+        db,
+        admin,
+    )
+    assert admin_update["manager_score"] == 90
+
     # Finalized records cannot be returned, even by Super Admin.
     finalized_row = db.get(KpiAssignment, submitted.id)
     finalized_row.status = AssignmentStatus.finalized
@@ -263,6 +316,8 @@ try:
     print("PASS: deleting a draft template clears employee override + KPI transaction data")
     print("PASS: Reporting Manager can return submitted KPI even when cycle is locked")
     print("PASS: HR cannot use Return to Employee unless they are the actual Reports To")
+    print("PASS: Manager Score locks after first submitted review for Manager and HR")
+    print("PASS: Super Admin can update a submitted Manager Score")
     print("PASS: finalized KPI cannot be returned without explicit reopen workflow")
     print("ALL TEMPLATE DELETE / RETURN REGRESSION TESTS PASSED")
 finally:
