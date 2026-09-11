@@ -11,7 +11,7 @@ const coreNavigation = [
   ['/hierarchy', Network, 'Team Hierarchy'],
   ['/templates', FileSpreadsheet, 'KPI Templates'],
   ['/kpi-input', FileInput, 'KPI Input'],
-  ['/settings', SettingsIcon, 'Settings & Reset Data']
+  ['/settings', SettingsIcon, 'Settings & Email Alerts']
 ]
 export default function Layout({children}) {
   const {user, logout} = useAuth()
