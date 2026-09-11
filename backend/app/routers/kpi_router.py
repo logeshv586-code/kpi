@@ -103,9 +103,9 @@ def _employee_template_override(db: Session, employee: User):
 
 
 def _require_published_assignment_template(assignment: KpiAssignment):
-    """Only published templates may be filled in or submitted by employees."""
-    if assignment.template.status != TemplateStatus.active:
-        raise HTTPException(409, "This KPI template has not been published. It cannot be filled in or submitted until HR publishes it.")
+    """Allow previously published assigned versions to finish after a newer version is published."""
+    if assignment.template.status == TemplateStatus.draft:
+        raise HTTPException(409, "This KPI template is currently unpublished. It cannot be filled in or submitted until HR publishes it.")
 
 
 def template_json(t: KpiTemplate):
@@ -482,7 +482,19 @@ def publish(template_id: int, db: Session = Depends(get_db), user=Depends(requir
     t.status = TemplateStatus.active
     audit(db, user.id, "publish", "kpi_template", t.id, {"version": t.version, "archived_versions": [x.id for x in previous]})
     
-    # Auto-assign newly published template to matching active users for running cycles
+    # Keep employee-level overrides on the new version when it supersedes an
+    # older version of the same scoped template.
+    previous_ids = [old.id for old in previous]
+    if previous_ids:
+        db.execute(
+            update(User)
+            .where(User.kpi_template_id.in_(previous_ids))
+            .values(kpi_template_id=t.id)
+        )
+
+    # Re-evaluate running-cycle assignments. Untouched assignments move to the
+    # newest best matching active template. Submitted/reviewed records and
+    # drafts with employee input stay on their original published version.
     running_cycles = db.scalars(select(KpiCycle).where(KpiCycle.status == CycleStatus.running)).all()
     if running_cycles:
         active_users = db.scalars(
@@ -490,14 +502,83 @@ def publish(template_id: int, db: Session = Depends(get_db), user=Depends(requir
             .where(User.active.is_(True))
             .options(joinedload(User.designation).joinedload(Designation.department).joinedload(Department.division))
         ).unique().all()
+        active_templates = db.scalars(
+            select(KpiTemplate)
+            .where(KpiTemplate.status == TemplateStatus.active)
+            .options(
+                joinedload(KpiTemplate.division),
+                joinedload(KpiTemplate.department),
+                joinedload(KpiTemplate.designation),
+                joinedload(KpiTemplate.kras).joinedload(Kra.items),
+            )
+            .order_by(KpiTemplate.version.desc(), KpiTemplate.id.desc())
+        ).unique().all()
+
         for cycle in running_cycles:
             for emp in active_users:
                 if emp.role == Role.superadmin:
                     continue
-                if _template_matches_employee(t, emp):
-                    existing = db.scalar(select(KpiAssignment).where(KpiAssignment.cycle_id == cycle.id, KpiAssignment.user_id == emp.id))
-                    if not existing:
-                        db.add(KpiAssignment(cycle_id=cycle.id, user_id=emp.id, template_id=t.id))
+
+                best_template = _employee_template_override(db, emp)
+                if not best_template:
+                    matching = [
+                        candidate
+                        for candidate in active_templates
+                        if _template_matches_employee(candidate, emp)
+                        and validate_template(candidate, strict=True)[0]
+                    ]
+                    best_template = max(
+                        matching,
+                        key=lambda candidate: (
+                            _template_scope_rank(candidate),
+                            candidate.version or 0,
+                            candidate.id or 0,
+                        ),
+                    ) if matching else None
+                if not best_template:
+                    continue
+
+                existing = db.scalar(
+                    select(KpiAssignment).where(
+                        KpiAssignment.cycle_id == cycle.id,
+                        KpiAssignment.user_id == emp.id,
+                    )
+                )
+                if not existing:
+                    db.add(
+                        KpiAssignment(
+                            cycle_id=cycle.id,
+                            user_id=emp.id,
+                            template_id=best_template.id,
+                            status=AssignmentStatus.not_started,
+                        )
+                    )
+                    continue
+                if existing.template_id == best_template.id:
+                    continue
+                if existing.status == AssignmentStatus.not_started:
+                    existing.template_id = best_template.id
+                    existing.calculated_score = 0
+                    existing.manager_score = None
+                    existing.final_score = None
+                    continue
+                if existing.status == AssignmentStatus.draft:
+                    has_response = db.scalar(
+                        select(KpiResponse.id)
+                        .where(KpiResponse.assignment_id == existing.id)
+                        .limit(1)
+                    )
+                    has_review = db.scalar(
+                        select(KpiReview.id)
+                        .where(KpiReview.assignment_id == existing.id)
+                        .limit(1)
+                    )
+                    if not has_response and not has_review:
+                        existing.template_id = best_template.id
+                        existing.calculated_score = 0
+                        existing.manager_score = None
+                        existing.final_score = None
+
     db.commit()
     return {"ok": True}
 
