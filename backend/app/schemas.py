@@ -183,3 +183,46 @@ class SettingsIn(BaseModel):
     default_choice_map: dict | None = None
     score_cap_pct: float | None = Field(default=None, ge=100, le=200)
     require_evidence_by_default: bool | None = None
+
+
+class EmailSettingsIn(BaseModel):
+    enabled: bool = True
+    host: str = Field(min_length=1, max_length=255)
+    port: int = Field(ge=1, le=65535)
+    username: str = Field(default="", max_length=255)
+    password: str | None = Field(default=None, max_length=512)
+    from_email: str = Field(min_length=3, max_length=255)
+    from_name: str = Field(default="KPI Performance Management", max_length=255)
+    use_tls: bool = True
+    use_ssl: bool = False
+    timeout_seconds: int = Field(default=15, ge=3, le=60)
+    test_email: str | None = Field(default=None, max_length=255)
+
+    @field_validator("from_email", "test_email")
+    @classmethod
+    def validate_optional_email(cls, value: str | None):
+        if value is None or not str(value).strip():
+            return None if value is None else ""
+        normalized = str(value).strip().lower()
+        if "@" not in normalized or "." not in normalized.split("@")[-1]:
+            raise ValueError("Enter a valid email address")
+        return normalized
+
+    @field_validator("host", "username", "from_name")
+    @classmethod
+    def strip_email_text(cls, value: str):
+        return str(value or "").strip()
+
+
+class EmailTestIn(BaseModel):
+    test_email: str | None = Field(default=None, max_length=255)
+
+    @field_validator("test_email")
+    @classmethod
+    def validate_test_email(cls, value: str | None):
+        if value is None or not str(value).strip():
+            return None
+        normalized = str(value).strip().lower()
+        if "@" not in normalized or "." not in normalized.split("@")[-1]:
+            raise ValueError("Enter a valid test recipient email")
+        return normalized
