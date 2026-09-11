@@ -62,11 +62,12 @@ export default function Templates(){
   }
 
   async function removeTemplate(id){
-    if (!window.confirm('Are you sure you want to remove this template? Any associated assignment records will also be removed.')) return
+    if (!window.confirm('Delete this unpublished KPI template? All employee KPI assignments, responses, manager reviews and scores created from this template will also be permanently removed from reports.')) return
     try {
-      setError('')
-      await api.delete(`/kpi/templates/${id}`)
-      setMessage('Template removed successfully.')
+      setError(''); setMessage('')
+      const {data}=await api.delete(`/kpi/templates/${id}`)
+      const removed=Number(data.deleted_assignments||0)
+      setMessage(`Template removed successfully. ${removed} KPI assignment${removed===1?'':'s'} and related score data removed from reports.`)
       load()
     } catch (e) {
       setError(getError(e))
@@ -225,7 +226,7 @@ export default function Templates(){
                             {t.status === 'active' ? (
                               <button className="secondary small" onClick={() => unpublish(t.id)}><Undo2 size={13}/>Unpublish</button>
                             ) : null}
-                            <button className="icon-button danger" onClick={() => removeTemplate(t.id)}><Trash2 size={13}/></button>
+                            {t.status === 'draft' ? <button className="icon-button danger" title="Delete unpublished draft and related KPI score data" onClick={() => removeTemplate(t.id)}><Trash2 size={13}/></button> : null}
                           </>
                         ) : null}
                       </div>
