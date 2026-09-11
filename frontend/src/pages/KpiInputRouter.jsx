@@ -102,6 +102,7 @@ function ReviewerWorkspace({initialList,onListChange}){
   const liveStaffScore=assignment?templateScore(assignment.template.kras,values):0
   const canEdit=Boolean(assignment?.can_edit_manager_score),canReview=Boolean(assignment?.can_review)
   const isSuperAdmin=user?.role==='superadmin'
+  const managerReviewSubmitted=Boolean(assignment?.manager_review_submitted)
   const canReturn=Boolean(assignment?.can_return_to_employee)
   const hasThresholdFailure=items.some(item=>qualificationStatus(item,values,'manager_').passed===false)
   const rawOfficial=assignment?.final_score??(assignment?.status==='manager_reviewed'?assignment?.manager_score:null)
@@ -149,7 +150,7 @@ function ReviewerWorkspace({initialList,onListChange}){
 
     {!canReview?<div className="view-only-note"><strong>Hierarchy view only.</strong> This employee is below your reporting chain, but only their immediate reporting manager can enter or submit Manager Score.</div>:null}
     {assignment.subordinate_score_cap_applies?<div className="subordinate-cap-note"><strong>Subordinate score rule:</strong> {pendingSubordinates>0?`${pendingSubordinates} direct-report KPI review${pendingSubordinates===1?' is':'s are'} still pending. This manager's review cannot be completed until those scores are available.`:`Maximum Manager Score for this employee: ${cap}/100, based on the summarized score of direct reports.`}</div>:null}
-    {canReview&&!canEdit?<div className="locked-note" style={{marginBottom:'14px'}}>{assignment.status==='draft'||assignment.status==='not_started'?'Employee must submit the KPI before Manager input can be entered.':assignment.status==='finalized'&&!isSuperAdmin?'This KPI is finalized. Only Super Admin can change the Manager Score.':'Manager Score editing is currently locked for this KPI.'}</div>:null}
+    {canReview&&!canEdit?<div className="locked-note" style={{marginBottom:'14px'}}>{assignment.status==='draft'||assignment.status==='not_started'?'Employee must submit the KPI before Manager input can be entered.':managerReviewSubmitted&&!isSuperAdmin?'Manager Score has already been submitted and is locked. Only Super Admin can update it.':assignment.status==='finalized'&&!isSuperAdmin?'This KPI is finalized. Only Super Admin can change the Manager Score.':'Manager Score editing is currently locked for this KPI.'}</div>:null}
 
     {assignment.template.kras.map(kra=>{
       const staffAverage=kraAverage(kra,values),managerAverage=kraAverage(kra,values,'manager_',false),staffKra=kraScore(kra,values),managerKra=kraScore(kra,values,'manager_',false)
@@ -168,7 +169,7 @@ function ReviewerWorkspace({initialList,onListChange}){
       })}</tbody></table></div></Card>
     })}
 
-    {canReview?<div className="footer-actions sticky-actions">{canReturn?<button className="secondary" disabled={busy} onClick={returnToEmployee}><RotateCcw size={16}/>Return to Employee</button>:<span/>}<div className="responsive-actions"><button className="secondary" disabled={busy||!canEdit} onClick={saveManagerScore}><Save size={16}/>{busy?'Saving...':'Save Manager Score'}</button><button className="primary" disabled={busy||!canEdit||!managerReady||pendingSubordinates>0||(cap!==null&&cap!==undefined&&liveManagerScore>Number(cap))} onClick={submitManagerReview}><Send size={16}/>{assignment.status==='finalized'&&isSuperAdmin?'Update Official Manager Score':'Submit Manager Review'}</button></div></div>:null}
+    {canReview?<div className="footer-actions sticky-actions">{canReturn?<button className="secondary" disabled={busy} onClick={returnToEmployee}><RotateCcw size={16}/>Return to Employee</button>:<span/>}{managerReviewSubmitted&&!isSuperAdmin?<div className="locked-note" style={{margin:0}}>Manager Score submitted · Super Admin only can update</div>:<div className="responsive-actions"><button className="secondary" disabled={busy||!canEdit} onClick={saveManagerScore}><Save size={16}/>{busy?'Saving...':'Save Manager Score'}</button><button className="primary" disabled={busy||!canEdit||!managerReady||pendingSubordinates>0||(cap!==null&&cap!==undefined&&liveManagerScore>Number(cap))} onClick={submitManagerReview}><Send size={16}/>{managerReviewSubmitted&&isSuperAdmin?'Update Manager Score':'Submit Manager Review'}</button></div>}</div>:null}
   </>
 }
 
