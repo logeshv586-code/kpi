@@ -1,19 +1,123 @@
-import {useState} from 'react'
-import {RefreshCcw, TriangleAlert} from 'lucide-react'
+import {useEffect, useState} from 'react'
+import {CircleAlert, MailCheck, RefreshCcw, Send, TriangleAlert} from 'lucide-react'
 import {api, getError} from '../lib/api'
 import {useAuth} from '../lib/auth'
 import {Card, ErrorBox, Modal, PageHeader} from '../components/UI'
+
+const emptyEmailForm={
+  host:'',
+  port:587,
+  username:'',
+  password:'',
+  from_email:'',
+  from_name:'KPI Performance Management',
+  security:'starttls',
+  timeout_seconds:15,
+  test_email:''
+}
 
 export default function Settings(){
   const {user} = useAuth()
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
+  const [emailForm,setEmailForm]=useState(emptyEmailForm)
+  const [emailHealth,setEmailHealth]=useState(null)
+  const [emailSource,setEmailSource]=useState('environment')
+  const [passwordConfigured,setPasswordConfigured]=useState(false)
+  const [emailBusy,setEmailBusy]=useState(false)
+  const [emailLoaded,setEmailLoaded]=useState(false)
   const [resetOpen, setResetOpen] = useState(false)
   const [resetMode, setResetMode] = useState('full')
   const [resetText, setResetText] = useState('')
   const [resetChecked, setResetChecked] = useState(false)
   const [busy, setBusy] = useState(false)
   const [resetErrors, setResetErrors] = useState({})
+
+  async function loadEmailSettings(){
+    try{
+      const {data}=await api.get('/admin/email-settings')
+      const cfg=data.config||{}
+      setEmailSource(cfg.source||'environment')
+      setPasswordConfigured(Boolean(cfg.password_configured))
+      setEmailHealth(data.health||null)
+      setEmailForm({
+        host:cfg.host||'',
+        port:cfg.port||587,
+        username:cfg.username||'',
+        password:'',
+        from_email:cfg.from_email||'',
+        from_name:cfg.from_name||'KPI Performance Management',
+        security:cfg.use_ssl?'ssl':cfg.use_tls?'starttls':'none',
+        timeout_seconds:cfg.timeout_seconds||15,
+        test_email:data.default_test_email||user?.email||''
+      })
+    }catch(e){
+      setError(getError(e))
+    }finally{
+      setEmailLoaded(true)
+    }
+  }
+
+  useEffect(()=>{loadEmailSettings()},[])
+
+  function updateEmailField(key,value){
+    setEmailForm(current=>({...current,[key]:value}))
+    setError('')
+    setMessage('')
+  }
+
+  function publishEmailHealth(result){
+    setEmailHealth(result)
+    window.dispatchEvent(new CustomEvent('kpi-email-health',{detail:result}))
+  }
+
+  async function testCurrentEmail(){
+    setEmailBusy(true);setError('');setMessage('')
+    try{
+      const {data}=await api.post('/admin/email-settings/test',{test_email:emailForm.test_email||user?.email})
+      publishEmailHealth(data)
+      setMessage(data.message||'Email connection is valid.')
+    }catch(e){
+      const detail=e?.response?.data?.detail
+      const failed={ok:false,message:typeof detail==='string'?detail:getError(e)}
+      publishEmailHealth(failed)
+      setError(failed.message)
+    }finally{
+      setEmailBusy(false)
+    }
+  }
+
+  async function saveAndTestEmail(){
+    setEmailBusy(true);setError('');setMessage('')
+    try{
+      const payload={
+        enabled:true,
+        host:emailForm.host,
+        port:Number(emailForm.port),
+        username:emailForm.username,
+        password:emailForm.password||null,
+        from_email:emailForm.from_email,
+        from_name:emailForm.from_name,
+        use_tls:emailForm.security==='starttls',
+        use_ssl:emailForm.security==='ssl',
+        timeout_seconds:Number(emailForm.timeout_seconds),
+        test_email:emailForm.test_email||user?.email
+      }
+      const {data}=await api.put('/admin/email-settings',payload)
+      setPasswordConfigured(Boolean(data.config?.password_configured))
+      setEmailSource(data.config?.source||'settings')
+      setEmailForm(current=>({...current,password:''}))
+      publishEmailHealth(data.health)
+      setMessage(data.message||'Email settings saved and validated.')
+    }catch(e){
+      const detail=e?.response?.data?.detail
+      const failed={ok:false,message:typeof detail==='string'?detail:getError(e)}
+      publishEmailHealth(failed)
+      setError(failed.message)
+    }finally{
+      setEmailBusy(false)
+    }
+  }
 
   async function reset(){
     const errors = {}
@@ -32,16 +136,53 @@ export default function Settings(){
     }
   }
 
+  const healthOk=emailHealth?.ok===true
+  const healthBad=emailHealth?.ok===false
+
   return (
     <>
       <PageHeader
-        title="Settings & System Data Reset"
-        subtitle="Administration controls for Superadmin to reset data and test Excel imports or manual entries from scratch."
+        title="Settings & Email Alerts"
+        subtitle="Keep the KPI email gateway healthy when the company SMTP/app password changes. A new password is activated only after a successful live test email."
       />
       <ErrorBox error={error}/>
       {message ? <div className="success-box">{message}</div> : null}
 
-      <Card className="danger-zone" style={{marginTop: 0}}>
+      <Card style={{marginTop:0}}>
+        <div className="section-heading">
+          <div>
+            <h3>Email Alert Configuration</h3>
+            <p className="muted small-copy">Admin and HR can update the monthly SMTP/app password here without changing application code. The saved password stays server-side and is never displayed back in the browser.</p>
+          </div>
+          <div className={healthOk?'status-badge success':healthBad?'status-badge danger':'status-badge'}>
+            {healthOk?'Connected':healthBad?'Attention required':'Not tested'}
+          </div>
+        </div>
+
+        {healthBad?<div className="locked-note" style={{marginBottom:'14px'}}><CircleAlert size={16}/><span>{emailHealth.message||'Email connection is not valid. Update the SMTP password and test again.'}</span></div>:null}
+        {healthOk?<div className="helper-strip" style={{marginBottom:'14px'}}><strong>Email gateway healthy.</strong> {emailHealth.message||'SMTP authentication is valid.'}{emailHealth.checked_at?' Last checked '+new Date(emailHealth.checked_at).toLocaleString()+'.':''}</div>:null}
+
+        {!emailLoaded?<div className="helper-strip">Loading email gateway settings...</div>:<>
+          <div className="form-grid">
+            <label>SMTP Host <span className="required-mark">*</span><input value={emailForm.host} onChange={e=>updateEmailField('host',e.target.value)} placeholder="smtp.office365.com"/></label>
+            <label>SMTP Port <span className="required-mark">*</span><input type="number" min="1" max="65535" value={emailForm.port} onChange={e=>updateEmailField('port',e.target.value)}/></label>
+            <label>SMTP Username / Email<input value={emailForm.username} onChange={e=>updateEmailField('username',e.target.value)} placeholder="kpi-alerts@company.com"/></label>
+            <label>SMTP / App Password<input type="password" value={emailForm.password} onChange={e=>updateEmailField('password',e.target.value)} autoComplete="new-password" placeholder={passwordConfigured?'Configured — enter only when password changes':'Enter SMTP/app password'}/><span className="cell-help">{passwordConfigured?'Leave blank to keep the currently validated password.':'A password is required when the SMTP account uses authentication.'}</span></label>
+            <label>Sender Email <span className="required-mark">*</span><input type="email" value={emailForm.from_email} onChange={e=>updateEmailField('from_email',e.target.value)} placeholder="kpi-alerts@company.com"/></label>
+            <label>Sender Name<input value={emailForm.from_name} onChange={e=>updateEmailField('from_name',e.target.value)} placeholder="KPI Performance Management"/></label>
+            <label>Connection Security<select value={emailForm.security} onChange={e=>updateEmailField('security',e.target.value)}><option value="starttls">STARTTLS (usually port 587)</option><option value="ssl">SSL/TLS (usually port 465)</option><option value="none">No TLS (internal SMTP only)</option></select></label>
+            <label>Connection Timeout (seconds)<input type="number" min="3" max="60" value={emailForm.timeout_seconds} onChange={e=>updateEmailField('timeout_seconds',e.target.value)}/></label>
+            <label className="span-2">Test Email Recipient<input type="email" value={emailForm.test_email} onChange={e=>updateEmailField('test_email',e.target.value)} placeholder={user?.email||'admin@company.com'}/><span className="cell-help">A real test email is sent here before a new password/configuration is activated.</span></label>
+          </div>
+          <div className="helper-strip" style={{marginTop:'12px'}}><strong>Current source:</strong> {emailSource==='settings'?'Validated Settings override':'backend/.env / deployment environment'}. If the provider rotates the password every month, enter the new password and use <b>Save, Test & Activate</b>.</div>
+          <div className="responsive-actions" style={{marginTop:'14px'}}>
+            <button className="secondary" disabled={emailBusy} onClick={testCurrentEmail}><MailCheck size={16}/>{emailBusy?'Testing...':'Test Current Connection'}</button>
+            <button className="primary" disabled={emailBusy||!emailForm.host||!emailForm.from_email} onClick={saveAndTestEmail}><Send size={16}/>{emailBusy?'Validating...':'Save, Test & Activate'}</button>
+          </div>
+        </>}
+      </Card>
+
+      {user?.role==='superadmin'?<Card className="danger-zone">
         <div className="danger-head">
           <TriangleAlert size={26}/>
           <div>
@@ -54,9 +195,9 @@ export default function Settings(){
         <button className="danger-button" onClick={() => setResetOpen(true)}>
           <RefreshCcw size={16}/> Reset System Data
         </button>
-      </Card>
+      </Card>:null}
 
-      {resetOpen ? (
+      {resetOpen && user?.role==='superadmin' ? (
         <Modal title="Reset System Data" onClose={() => setResetOpen(false)} actions={
           <>
             <button className="secondary" onClick={() => setResetOpen(false)}>Cancel</button>
@@ -87,7 +228,7 @@ export default function Settings(){
                 </div>
               </label>
             </div>
-            <label className={`confirm-check ${resetErrors.confirm?'invalid-field':''}`}>
+            <label className={'confirm-check '+(resetErrors.confirm?'invalid-field':'')}>
               <input aria-invalid={Boolean(resetErrors.confirm)} type="checkbox" checked={resetChecked} onChange={e => {setResetChecked(e.target.checked);setResetErrors(x=>({...x,confirm:''}))}}/> I understand that selected system data and history will be permanently deleted. <span className="required-mark">*</span>
             </label>
             {resetErrors.confirm?<span className="field-error">{resetErrors.confirm}</span>:null}
