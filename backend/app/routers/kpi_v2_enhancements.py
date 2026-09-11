@@ -303,7 +303,7 @@ def enhanced_my_assignments(db: Session = Depends(get_db), user: User = Depends(
         )
         .order_by(KpiAssignment.id.desc())
     )
-    rows = [a for a in db.scalars(stmt).unique().all() if a.template.status.value == "active"]
+    rows = [a for a in db.scalars(stmt).unique().all() if a.template.status != TemplateStatus.draft]
 
     return [
         {
