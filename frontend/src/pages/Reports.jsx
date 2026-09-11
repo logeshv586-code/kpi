@@ -3,6 +3,7 @@ import {Award,BarChart2,CheckCircle2,Clock3,Download,TrendingUp,UserCheck,Users}
 import {api,getError} from '../lib/api'
 import {useAuth} from '../lib/auth'
 import {Card,ErrorBox,Loader,PageHeader,Score} from '../components/UI'
+import {chooseDefaultReportOption,currentFinancialYear} from '../lib/reviewPeriodSelection'
 
 const typeLabel={monthly:'Monthly',quarterly:'Quarterly',half_yearly:'Half-Yearly',annual:'Annual'}
 const typeOrder={monthly:0,quarterly:1,half_yearly:2,annual:3}
@@ -22,7 +23,11 @@ export default function Reports(){
 
   const periods=useMemo(()=>[...(data?.periods||[])].sort((a,b)=>String(a.month).localeCompare(String(b.month))||(typeOrder[a.review_type]??99)-(typeOrder[b.review_type]??99)),[data])
   const financialYears=useMemo(()=>[...new Set(periods.map(p=>p.financial_year).filter(Boolean))].sort().reverse(),[periods])
-  useEffect(()=>{if(!financialYear&&financialYears.length)setFinancialYear(financialYears[0])},[financialYears,financialYear])
+  useEffect(()=>{
+    if(financialYear||!financialYears.length)return
+    const currentFy=currentFinancialYear()
+    setFinancialYear(financialYears.includes(currentFy)?currentFy:financialYears[0])
+  },[financialYears,financialYear])
   const availableTypes = ['monthly', 'quarterly', 'half_yearly', 'annual']
 
   const quarterMonths = {
@@ -109,20 +114,14 @@ export default function Reports(){
 
   useEffect(() => {
     if (!periodOptions.length) return
-    if (!periodKey) {
-      const currentMonthStr = new Date().toISOString().slice(0, 7)
-      const match = periodOptions.find(p => p.status === 'running') ||
-                    periodOptions.find(p => p.month && p.month.startsWith(currentMonthStr)) ||
-                    periodOptions[0]
-      setPeriodKey(match ? match.key : 'all')
-    } else if (periodKey !== 'all' && !periodOptions.some(p => p.key === periodKey)) {
-      const currentMonthStr = new Date().toISOString().slice(0, 7)
-      const match = periodOptions.find(p => p.status === 'running') ||
-                    periodOptions.find(p => p.month && p.month.startsWith(currentMonthStr)) ||
-                    periodOptions[0]
+    if (!periodKey || (periodKey !== 'all' && !periodOptions.some(p => p.key === periodKey))) {
+      const currentFy=currentFinancialYear()
+      const match=financialYear===currentFy
+        ? chooseDefaultReportOption(reviewType,periodOptions)
+        : periodOptions[periodOptions.length-1]
       setPeriodKey(match ? match.key : 'all')
     }
-  }, [periodOptions, periodKey])
+  }, [periodOptions, periodKey, reviewType, financialYear])
 
   const selectedKeys = useMemo(() => {
     if (periodKey === 'all') {
