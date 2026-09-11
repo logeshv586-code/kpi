@@ -27,18 +27,21 @@ review._remove_route(kpi_submit_override.router, _SUBMIT_PATH, {"POST"})
 
 
 def _review_already_submitted(assignment, user: User) -> bool:
-    """Return True when this reviewer is not permitted to edit because the record is finalized."""
+    """Return True once a non-Super-Admin reviewer has submitted Manager Review."""
     if review._is_superadmin(user):
         return False
     if not review._can_review(user, assignment):
         return False
-    return assignment.status == AssignmentStatus.finalized
+    return assignment.status in {
+        AssignmentStatus.manager_reviewed,
+        AssignmentStatus.finalized,
+    }
 
 
 def _raise_review_locked():
     raise HTTPException(
         409,
-        "This KPI review is finalized and locked. Only Super Admin can change the score now.",
+        "Manager Score has already been submitted and is locked. Only Super Admin can change it.",
     )
 
 
@@ -52,12 +55,16 @@ def locked_relationship_get_assignment(
     status = data.get("status")
     superadmin = review._is_superadmin(user)
     is_finalized = status == AssignmentStatus.finalized.value
-    review_status_ok = status in {
-        AssignmentStatus.submitted.value,
+    manager_review_submitted = status in {
         AssignmentStatus.manager_reviewed.value,
-    } or (superadmin and is_finalized)
+        AssignmentStatus.finalized.value,
+    }
+    review_status_ok = (
+        status == AssignmentStatus.submitted.value
+        or (superadmin and manager_review_submitted)
+    )
 
-    if is_finalized and not superadmin:
+    if manager_review_submitted and not superadmin:
         data["can_edit_manager_score"] = False
     else:
         cycle_open = not data.get("is_locked") and data.get("cycle_status") != "closed"
@@ -67,10 +74,7 @@ def locked_relationship_get_assignment(
             and (superadmin or cycle_open)
         )
 
-    data["manager_review_submitted"] = status in {
-        AssignmentStatus.manager_reviewed.value,
-        AssignmentStatus.finalized.value,
-    }
+    data["manager_review_submitted"] = manager_review_submitted
     data["can_return_to_employee"] = bool(
         status in {AssignmentStatus.submitted.value, AssignmentStatus.manager_reviewed.value}
         and (superadmin or data.get("manager_id") == user.id)
