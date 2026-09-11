@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from ..auth import get_current_user
 from ..database import get_db
-from ..models import AssignmentStatus, CycleStatus, KpiAssignment, Role, User
+from ..models import AssignmentStatus, CycleStatus, KpiAssignment, KpiTemplate, Role, TemplateStatus, User
 from . import kpi_router
 from .kpi_v2_enhancements import _descendant_ids, _financial_year
 
@@ -16,7 +16,11 @@ def pending_summary(db: Session = Depends(get_db), user: User = Depends(get_curr
     stmt = (
         select(KpiAssignment)
         .join(KpiAssignment.cycle)
-        .where(KpiAssignment.cycle.has(status=CycleStatus.running))
+        .join(KpiTemplate, KpiAssignment.template_id == KpiTemplate.id)
+        .where(
+            KpiAssignment.cycle.has(status=CycleStatus.running),
+            KpiTemplate.status != TemplateStatus.draft,
+        )
         .options(
             joinedload(KpiAssignment.user).joinedload(User.manager),
             joinedload(KpiAssignment.cycle),
