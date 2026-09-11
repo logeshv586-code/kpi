@@ -62,6 +62,13 @@ jobs:
           FRONTEND_URL: http://localhost:5173
         run: PYTHONPATH=backend python backend/tests/run_template_delete_return_tests.py
 
+      - name: KPI template republish assignment history
+        env:
+          DATABASE_URL: sqlite:////tmp/kpi_template_publish_assignment_ci.db
+          SECRET_KEY: test-secret-test-secret-test-secret-123
+          FRONTEND_URL: http://localhost:5173
+        run: PYTHONPATH=backend python backend/tests/run_template_publish_assignment_tests.py
+
       - name: Existing KPI regression suite
         env:
           DATABASE_URL: sqlite:////tmp/kpi_v12_ci.db
