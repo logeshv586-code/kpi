@@ -35,11 +35,14 @@ export default function Settings(){
 
   async function loadEmailSettings(){
     try{
-      const {data}=await api.get('/admin/email-settings')
+      const [{data},{data:liveHealth}]=await Promise.all([
+        api.get('/admin/email-settings'),
+        api.get('/admin/email-health?live=true')
+      ])
       const cfg=data.config||{}
       setEmailSource(cfg.source||'environment')
       setPasswordConfigured(Boolean(cfg.password_configured))
-      setEmailHealth(data.health||null)
+      setEmailHealth(liveHealth||data.health||null)
       setEmailForm({
         host:cfg.host||'',
         port:cfg.port||587,
@@ -52,7 +55,8 @@ export default function Settings(){
         test_email:data.default_test_email||user?.email||''
       })
     }catch(e){
-      setError(getError(e))
+      const detail=e?.response?.data?.detail
+      setEmailHealth({ok:false,message:typeof detail==='string'?detail:'Email connection could not be verified. Update the email password and test again.'})
     }finally{
       setEmailLoaded(true)
     }
@@ -66,21 +70,16 @@ export default function Settings(){
     setMessage('')
   }
 
-  function publishEmailHealth(result){
-    setEmailHealth(result)
-    window.dispatchEvent(new CustomEvent('kpi-email-health',{detail:result}))
-  }
-
   async function testCurrentEmail(){
     setEmailBusy(true);setError('');setMessage('')
     try{
       const {data}=await api.post('/admin/email-settings/test',{test_email:emailForm.test_email||user?.email})
-      publishEmailHealth(data)
-      setMessage(data.message||'Email connection is valid.')
+      setEmailHealth(data)
+      setMessage('Connected. SMTP login is working and the test email was sent successfully. KPI email alerts can be sent normally.')
     }catch(e){
       const detail=e?.response?.data?.detail
       const failed={ok:false,message:typeof detail==='string'?detail:getError(e)}
-      publishEmailHealth(failed)
+      setEmailHealth(failed)
       setError(failed.message)
     }finally{
       setEmailBusy(false)
@@ -107,12 +106,12 @@ export default function Settings(){
       setPasswordConfigured(Boolean(data.config?.password_configured))
       setEmailSource(data.config?.source||'settings')
       setEmailForm(current=>({...current,password:''}))
-      publishEmailHealth(data.health)
-      setMessage(data.message||'Email settings saved and validated.')
+      setEmailHealth(data.health)
+      setMessage('Connected. The new email password is valid, the test email was sent, and KPI email alerts are active again.')
     }catch(e){
       const detail=e?.response?.data?.detail
       const failed={ok:false,message:typeof detail==='string'?detail:getError(e)}
-      publishEmailHealth(failed)
+      setEmailHealth(failed)
       setError(failed.message)
     }finally{
       setEmailBusy(false)
@@ -143,7 +142,7 @@ export default function Settings(){
     <>
       <PageHeader
         title="Settings & Email Alerts"
-        subtitle="Keep the KPI email gateway healthy when the company SMTP/app password changes. A new password is activated only after a successful live test email."
+        subtitle="Email connection status is checked only on this Settings page. Other KPI pages continue to work normally even when the mail password is disconnected."
       />
       <ErrorBox error={error}/>
       {message ? <div className="success-box">{message}</div> : null}
@@ -152,15 +151,15 @@ export default function Settings(){
         <div className="section-heading">
           <div>
             <h3>Email Alert Configuration</h3>
-            <p className="muted small-copy">Admin and HR can update the monthly SMTP/app password here without changing application code. The saved password stays server-side and is never displayed back in the browser.</p>
+            <p className="muted small-copy">If someone changes the mailbox/app password outside this KPI system, this page will detect the SMTP login failure. Enter the new password here, test it, and mail alerts will resume after the connection succeeds.</p>
           </div>
           <div className={healthOk?'status-badge success':healthBad?'status-badge danger':'status-badge'}>
-            {healthOk?'Connected':healthBad?'Attention required':'Not tested'}
+            {healthOk?'Connected · Mail alerts active':healthBad?'Disconnected · Mail alerts not sending':'Checking connection'}
           </div>
         </div>
 
-        {healthBad?<div className="locked-note" style={{marginBottom:'14px'}}><CircleAlert size={16}/><span>{emailHealth.message||'Email connection is not valid. Update the SMTP password and test again.'}</span></div>:null}
-        {healthOk?<div className="helper-strip" style={{marginBottom:'14px'}}><strong>Email gateway healthy.</strong> {emailHealth.message||'SMTP authentication is valid.'}{emailHealth.checked_at?' Last checked '+new Date(emailHealth.checked_at).toLocaleString()+'.':''}</div>:null}
+        {healthBad?<div className="locked-note" style={{marginBottom:'14px'}}><CircleAlert size={16}/><span><strong>Email disconnected.</strong> {emailHealth.message||'The saved email password is no longer valid.'} KPI email alerts are not being sent until the password is corrected and the connection test passes.</span></div>:null}
+        {healthOk?<div className="helper-strip" style={{marginBottom:'14px'}}><strong>Email connected.</strong> SMTP authentication is working. KPI email alerts can be sent normally.{emailHealth.checked_at?' Last checked '+new Date(emailHealth.checked_at).toLocaleString()+'.':''}</div>:null}
 
         {!emailLoaded?<div className="helper-strip">Loading email gateway settings...</div>:<>
           <div className="form-grid">
@@ -176,8 +175,8 @@ export default function Settings(){
           </div>
           <div className="helper-strip" style={{marginTop:'12px'}}><strong>Current source:</strong> {emailSource==='settings'?'Validated Settings override':'backend/.env / deployment environment'}. If the provider rotates the password every month, enter the new password and use <b>Save, Test & Activate</b>.</div>
           <div className="responsive-actions" style={{marginTop:'14px'}}>
-            <button className="secondary" disabled={emailBusy} onClick={testCurrentEmail}><MailCheck size={16}/>{emailBusy?'Testing...':'Test Current Connection'}</button>
-            <button className="primary" disabled={emailBusy||!emailForm.host||!emailForm.from_email} onClick={saveAndTestEmail}><Send size={16}/>{emailBusy?'Validating...':'Save, Test & Activate'}</button>
+            <button className="secondary" disabled={emailBusy} onClick={testCurrentEmail}><MailCheck size={16}/>{emailBusy?'Testing...':'Test Connection & Send Email'}</button>
+            <button className="primary" disabled={emailBusy||!emailForm.host||!emailForm.from_email} onClick={saveAndTestEmail}><Send size={16}/>{emailBusy?'Validating...':'Update Password, Test & Connect'}</button>
           </div>
         </>}
       </Card>
