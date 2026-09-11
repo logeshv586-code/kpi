@@ -21,6 +21,7 @@ export const useAuth=()=>useContext(AuthContext)
 
 export const canAccessTab = (user, tab, edit = false) => {
   if (user?.role === 'superadmin') return true
+  if (tab === 'settings') return user?.role === 'hr'
   if (tab === 'hierarchy') return ['hr','manager'].includes(user?.role) || Boolean(user?.is_reporting_manager)
   const permissions = user?.permissions || {}
   const allowed = permissions[edit ? 'editable_tabs' : 'tabs'] || (edit ? ['kpi-input'] : ['kpi-input', 'reports', 'employees'])
