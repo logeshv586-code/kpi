@@ -25,6 +25,7 @@ from ..models import (
     KpiTemplate,
     Role,
     SystemSetting,
+    TemplateStatus,
     User,
     Kra,
 )
@@ -176,6 +177,8 @@ review._can_view = _enhanced_can_view
 def _dashboard_visible_assignments(db: Session, user: User):
     rows = db.scalars(
         select(KpiAssignment)
+        .join(KpiTemplate, KpiAssignment.template_id == KpiTemplate.id)
+        .where(KpiTemplate.status != TemplateStatus.draft)
         .options(
             joinedload(KpiAssignment.user)
             .joinedload(User.designation)
@@ -349,7 +352,7 @@ def capped_manager_review(
     assignment = review._load_assignment(db, assignment_id)
     if not assignment:
         raise HTTPException(404, "Assignment not found")
-    if review_lock._review_already_submitted(assignment, user):
+    if payload.decision != "rejected" and review_lock._review_already_submitted(assignment, user):
         review_lock._raise_review_locked()
 
     if payload.decision != "rejected":
@@ -475,7 +478,11 @@ def enhanced_history(user_id: int, db: Session = Depends(get_db), user: User = D
         raise HTTPException(403, "This employee is outside your reporting hierarchy")
     rows = db.scalars(
         select(KpiAssignment)
-        .where(KpiAssignment.user_id == user_id)
+        .join(KpiTemplate, KpiAssignment.template_id == KpiTemplate.id)
+        .where(
+            KpiAssignment.user_id == user_id,
+            KpiTemplate.status != TemplateStatus.draft,
+        )
         .options(joinedload(KpiAssignment.cycle))
         .order_by(KpiAssignment.cycle_id)
     ).all()
@@ -658,9 +665,11 @@ def run_due_notifications(db: Session, today: date | None = None) -> dict:
         if cycle_ids:
             pending = db.scalars(
                 select(KpiAssignment)
+                .join(KpiTemplate, KpiAssignment.template_id == KpiTemplate.id)
                 .where(
                     KpiAssignment.cycle_id.in_(cycle_ids),
                     KpiAssignment.status.in_([AssignmentStatus.not_started, AssignmentStatus.draft]),
+                    KpiTemplate.status == TemplateStatus.active,
                 )
                 .options(joinedload(KpiAssignment.user), joinedload(KpiAssignment.cycle))
             ).all()
@@ -707,7 +716,16 @@ def run_due_notifications(db: Session, today: date | None = None) -> dict:
                 )
             )
             assignment_exists = bool(
-                cycle and db.scalar(select(KpiAssignment.id).where(KpiAssignment.cycle_id == cycle.id).limit(1))
+                cycle
+                and db.scalar(
+                    select(KpiAssignment.id)
+                    .join(KpiTemplate, KpiAssignment.template_id == KpiTemplate.id)
+                    .where(
+                        KpiAssignment.cycle_id == cycle.id,
+                        KpiTemplate.status == TemplateStatus.active,
+                    )
+                    .limit(1)
+                )
             )
             if not cycle or not assignment_exists:
                 missing.append(spec["period_label"])
