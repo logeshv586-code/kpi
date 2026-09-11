@@ -6,6 +6,7 @@ import {useAuth} from '../lib/auth'
 import FileUpload from '../components/FileUpload'
 import {Card,ErrorBox,Loader,Modal,PageHeader,Status} from '../components/UI'
 import {assignmentDepartment,compareText} from '../lib/sorting'
+import {chooseDefaultReviewPeriod} from '../lib/reviewPeriodSelection'
 import {
   whole,scoreText,isChoice,isKraAverage100,isMeasurementTarget,measurementLabels,metricUnit,
   minimumScore,qualifyingValue,targetValue,formatMetric,qualificationStatus,kpiScore100,kraAverage,kraScore,templateScore
@@ -71,7 +72,14 @@ export default function KpiInputV2(){
   const locked=(submitted&&!isManagerMode)||(assignment?.cycle_status==='closed')||Boolean(assignment?.is_locked&&!isAdminOrHr)
   const managerLocked=(assignment?.status==='finalized'&&!isAdminOrHr)||(assignment?.cycle_status==='closed')
 
-  const loadList=()=>api.get('/kpi/my').then(r=>{setList(r.data);if(!params.get('assignment')&&r.data[0])setParams({assignment:r.data[0].id})}).catch(e=>setError(getError(e)))
+  const loadList=()=>api.get('/kpi/my').then(r=>{
+    setList(r.data)
+    if(!params.get('assignment')&&r.data.length){
+      const selfRows=r.data.filter(row=>String(row.employee_id)===String(user?.id))
+      const preferred=chooseDefaultReviewPeriod(selfRows.length?selfRows:r.data)
+      if(preferred)setParams({assignment:preferred.id},{replace:true})
+    }
+  }).catch(e=>setError(getError(e)))
   useEffect(()=>{loadList()},[])
 
   async function loadAssignment(){
@@ -93,10 +101,33 @@ export default function KpiInputV2(){
   const personRows=useMemo(()=>departmentRows.filter(a=>String(a.employee_id)===person).sort((a,b)=>String(b.month||'').localeCompare(String(a.month||''))||String(b.id).localeCompare(String(a.id))),[departmentRows,person])
   const currentSummary=(list||[]).find(a=>String(a.id)===String(id))
 
-  useEffect(()=>{if(!list?.length)return;const current=currentSummary||list[0];setDepartment(assignmentDepartment(current));setPerson(String(current.employee_id))},[list,id])
-  function selectDepartment(value){setDepartment(value);const first=(list||[]).filter(a=>assignmentDepartment(a)===value).sort((a,b)=>compareText(a.employee,b.employee))[0];if(first){setPerson(String(first.employee_id));setParams({assignment:first.id})}}
-  function selectPerson(value){setPerson(value);const first=departmentRows.find(a=>String(a.employee_id)===value);if(first)setParams({assignment:first.id})}
+  useEffect(()=>{
+    if(!list?.length)return
+    const current=currentSummary||chooseDefaultReviewPeriod(list)
+    if(!current)return
+    setDepartment(assignmentDepartment(current))
+    setPerson(String(current.employee_id))
+  },[list,id])
+  function selectDepartment(value){
+    setDepartment(value)
+    const candidates=(list||[]).filter(a=>assignmentDepartment(a)===value).sort((a,b)=>compareText(a.employee,b.employee))
+    if(!candidates.length)return
+    const employeeId=String(candidates[0].employee_id)
+    const preferred=chooseDefaultReviewPeriod(candidates.filter(a=>String(a.employee_id)===employeeId))
+    setPerson(employeeId)
+    if(preferred)setParams({assignment:preferred.id})
+  }
+  function selectPerson(value){
+    setPerson(value)
+    const preferred=chooseDefaultReviewPeriod(departmentRows.filter(a=>String(a.employee_id)===String(value)))
+    if(preferred)setParams({assignment:preferred.id})
+  }
   function selectPeriod(value){if(value)setParams({assignment:value})}
+  function openPeriodBrowser(){
+    const year=Number(String(currentSummary?.month||'').slice(0,4))
+    setSelectedYear(Number.isFinite(year)&&year>0?year:new Date().getFullYear())
+    setShowMonths(true)
+  }
 
   const allItems=useMemo(()=>assignment?assignment.template.kras.flatMap(k=>k.items):[],[assignment])
   const isAnswered=item=>{const v=values[item.id]||{};return isChoice(item)?Boolean(v.selected_option):v.actual_numeric!==null&&v.actual_numeric!==undefined&&v.actual_numeric!==''}
@@ -124,7 +155,7 @@ export default function KpiInputV2(){
     <div className="kpi-selector-bar">
       <div><strong>1. Department</strong><select value={department} onChange={e=>selectDepartment(e.target.value)}><option value="">Choose department</option>{departments.map(d=><option key={d} value={d}>{d}</option>)}</select></div>
       <div><strong>2. Employee</strong><select value={person} onChange={e=>selectPerson(e.target.value)} disabled={!department}><option value="">Choose employee</option>{people.map(p=><option key={p.key} value={p.key}>{p.name}{p.no?` (${p.no})`:''}{p.designation?` · ${p.designation}`:''}</option>)}</select></div>
-      <div><strong>3. Review Period</strong><div className="responsive-actions"><select value={String(id||'')} onChange={e=>selectPeriod(e.target.value)} disabled={!person}>{personRows.map(row=><option key={row.id} value={row.id}>{periodLabel(row)} · {(row.review_type||'monthly').replace('_',' ')}</option>)}</select><button className="calendar-trigger" type="button" onClick={()=>setShowMonths(true)} title="Browse all review periods"><CalendarDays size={18}/></button></div></div>
+      <div><strong>3. Review Period</strong><div className="responsive-actions"><select value={String(id||'')} onChange={e=>selectPeriod(e.target.value)} disabled={!person}>{personRows.map(row=><option key={row.id} value={row.id}>{periodLabel(row)} · {(row.review_type||'monthly').replace('_',' ')}</option>)}</select><button className="calendar-trigger" type="button" onClick={openPeriodBrowser} title="Browse all review periods"><CalendarDays size={18}/></button></div></div>
     </div>
 
     <div className="helper-strip"><strong>Measurement scoring:</strong> target value = 100 marks. Higher-is-better uses actual ÷ target; lower-is-better uses target ÷ actual. Marks are capped at 100 and rounded to a whole integer. If the qualifying value is not achieved, that KPI gets 0 marks. KRA average and final weighted score may show two decimals.</div>
