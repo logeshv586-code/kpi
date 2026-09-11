@@ -92,6 +92,7 @@ function ReviewerWorkspace({initialList,onListChange}){
   const liveStaffScore=assignment?templateScore(assignment.template.kras,values):0
   const canEdit=Boolean(assignment?.can_edit_manager_score),canReview=Boolean(assignment?.can_review)
   const isSuperAdmin=user?.role==='superadmin'
+  const canReturn=Boolean(assignment?.can_return_to_employee)
   const hasThresholdFailure=items.some(item=>qualificationStatus(item,values,'manager_').passed===false)
   const rawOfficial=assignment?.final_score??(assignment?.status==='manager_reviewed'?assignment?.manager_score:null)
   const officialScore=hasThresholdFailure&&rawOfficial!==null?0:rawOfficial
@@ -110,6 +111,7 @@ function ReviewerWorkspace({initialList,onListChange}){
     try{await api.put(`/kpi/assignments/${id}/responses`,payload());const{data}=await api.post(`/kpi/assignments/${id}/manager-review`,{decision:'approved',comments:isSuperAdmin?'Manager Score reviewed/updated by Super Admin.':'Manager Score submitted by reporting person.'});setMessage(`Manager review completed. Official Manager Score: ${scoreText(data.manager_score??liveManagerScore)}/100.`);await loadAssignment();await refreshList()}catch(e){setError(getError(e))}finally{setBusy(false)}
   }
   async function returnToEmployee(){
+    if(!canReturn||busy)return
     const comments=window.prompt('Reason for returning this KPI to the employee:','Please update the KPI achieved values and resubmit.');
     if(comments===null)return;
     setBusy(true);setError('');
@@ -156,7 +158,7 @@ function ReviewerWorkspace({initialList,onListChange}){
       })}</tbody></table></div></Card>
     })}
 
-    {canReview?<div className="footer-actions sticky-actions"><button className="secondary" disabled={busy||(assignment.status==='finalized'&&!isSuperAdmin)} onClick={returnToEmployee}><RotateCcw size={16}/>Return to Employee</button><div className="responsive-actions"><button className="secondary" disabled={busy||!canEdit} onClick={saveManagerScore}><Save size={16}/>{busy?'Saving...':'Save Manager Score'}</button><button className="primary" disabled={busy||!canEdit||!managerReady||pendingSubordinates>0||(cap!==null&&cap!==undefined&&liveManagerScore>Number(cap))} onClick={submitManagerReview}><Send size={16}/>{assignment.status==='finalized'&&isSuperAdmin?'Update Official Manager Score':'Submit Manager Review'}</button></div></div>:null}
+    {canReview?<div className="footer-actions sticky-actions">{canReturn?<button className="secondary" disabled={busy} onClick={returnToEmployee}><RotateCcw size={16}/>Return to Employee</button>:<span/>}<div className="responsive-actions"><button className="secondary" disabled={busy||!canEdit} onClick={saveManagerScore}><Save size={16}/>{busy?'Saving...':'Save Manager Score'}</button><button className="primary" disabled={busy||!canEdit||!managerReady||pendingSubordinates>0||(cap!==null&&cap!==undefined&&liveManagerScore>Number(cap))} onClick={submitManagerReview}><Send size={16}/>{assignment.status==='finalized'&&isSuperAdmin?'Update Official Manager Score':'Submit Manager Review'}</button></div></div>:null}
   </>
 }
 
