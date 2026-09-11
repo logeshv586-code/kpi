@@ -9,15 +9,17 @@ from sqlalchemy.orm import Session, joinedload
 from ..auth import get_current_user, has_tab_permission, hash_password, require_roles, require_tab_permission
 from ..database import get_db
 from ..file_storage import TEMPLATE_EXTENSIONS, parse_template_rows, read_table, save_upload
+from ..mail import SMTP_CONFIG_KEY, SMTP_HEALTH_KEY, get_smtp_config, public_smtp_config, record_smtp_health, test_smtp_connection
 from ..models import AssignmentStatus, CycleStatus, Department, Designation, Division, KpiAssignment, KpiCycle, KpiTemplate, Kra, Role, SystemSetting, TemplateStatus, User
 from ..reset_seed import reset_full_system_data, reset_transactional_data
 from ..sample_files import ensure_samples
-from ..schemas import MasterCreate, ResetIn, SettingsIn, UserCreate, UserOut, UserUpdate
+from ..schemas import EmailSettingsIn, EmailTestIn, MasterCreate, ResetIn, SettingsIn, UserCreate, UserOut, UserUpdate
 from ..services import audit, validate_template
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 admin_roles = require_roles(Role.superadmin)
 superadmin_only = require_roles(Role.superadmin)
+email_admin_roles = require_roles(Role.superadmin, Role.hr)
 
 
 def _commit_or_conflict(db: Session, message: str):
@@ -518,6 +520,129 @@ def update_settings(payload: SettingsIn, db: Session = Depends(get_db), actor=De
     audit(db, actor.id, "update", "system_settings", None, {"keys": list(data)})
     db.commit()
     return {"ok": True}
+
+
+def _email_health_payload(db: Session) -> dict:
+    row = db.get(SystemSetting, SMTP_HEALTH_KEY)
+    if row and isinstance(row.value, dict):
+        return {
+            "ok": bool(row.value.get("ok")),
+            "checked_at": row.value.get("checked_at"),
+            "message": str(row.value.get("message") or ""),
+        }
+    return {
+        "ok": None,
+        "checked_at": None,
+        "message": "Email connection has not been tested yet.",
+    }
+
+
+@router.get("/email-settings")
+def get_email_settings(db: Session = Depends(get_db), actor=Depends(email_admin_roles)):
+    return {
+        "config": public_smtp_config(),
+        "health": _email_health_payload(db),
+        "default_test_email": actor.email,
+    }
+
+
+@router.get("/email-health")
+def get_email_health(
+    live: bool = True,
+    db: Session = Depends(get_db),
+    actor=Depends(email_admin_roles),
+):
+    if not live:
+        return _email_health_payload(db)
+    result = test_smtp_connection()
+    record_smtp_health(result)
+    return result
+
+
+@router.post("/email-settings/test")
+def test_current_email_settings(
+    payload: EmailTestIn,
+    actor=Depends(email_admin_roles),
+):
+    result = test_smtp_connection(send_to=payload.test_email or actor.email)
+    record_smtp_health(result)
+    if not result.get("ok"):
+        raise HTTPException(400, result.get("message") or "Email connection validation failed")
+    return result
+
+
+@router.put("/email-settings")
+def update_email_settings(
+    payload: EmailSettingsIn,
+    db: Session = Depends(get_db),
+    actor=Depends(email_admin_roles),
+):
+    current = get_smtp_config()
+    data = payload.model_dump()
+    supplied_password = (data.pop("password", None) or "").strip()
+    test_email = data.pop("test_email", None) or actor.email
+
+    candidate = {
+        "enabled": bool(data["enabled"]),
+        "host": data["host"].strip(),
+        "port": int(data["port"]),
+        "username": data["username"].strip(),
+        "password": supplied_password or str(current.get("password") or ""),
+        "from_email": data["from_email"].strip().lower(),
+        "from_name": data["from_name"].strip(),
+        "use_tls": bool(data["use_tls"]),
+        "use_ssl": bool(data["use_ssl"]),
+        "timeout_seconds": int(data["timeout_seconds"]),
+    }
+
+    if candidate["use_tls"] and candidate["use_ssl"]:
+        raise HTTPException(400, "Choose either STARTTLS or SSL, not both.")
+    if candidate["username"] and not candidate["password"]:
+        raise HTTPException(400, "SMTP password/app password is required for the configured username.")
+
+    # Never activate a new monthly password/configuration until it has logged in
+    # successfully and delivered a real validation email.
+    result = test_smtp_connection(candidate, send_to=test_email)
+    record_smtp_health(result)
+    if not result.get("ok"):
+        raise HTTPException(400, result.get("message") or "Email connection validation failed")
+
+    stored = {
+        **candidate,
+        "validated": True,
+        "validated_at": result.get("checked_at"),
+        "validated_by_user_id": actor.id,
+    }
+    row = db.get(SystemSetting, SMTP_CONFIG_KEY)
+    if row:
+        row.value = stored
+    else:
+        db.add(SystemSetting(key=SMTP_CONFIG_KEY, value=stored))
+
+    audit(
+        db,
+        actor.id,
+        "update",
+        "email_smtp_settings",
+        None,
+        {
+            "host": candidate["host"],
+            "port": candidate["port"],
+            "username": candidate["username"],
+            "from_email": candidate["from_email"],
+            "use_tls": candidate["use_tls"],
+            "use_ssl": candidate["use_ssl"],
+            "password_changed": bool(supplied_password),
+            "test_email": test_email,
+        },
+    )
+    db.commit()
+    return {
+        "ok": True,
+        "message": "Email settings validated, test email sent, and configuration activated.",
+        "config": public_smtp_config(),
+        "health": result,
+    }
 
 
 def _row_get(row: dict, *names: str):
