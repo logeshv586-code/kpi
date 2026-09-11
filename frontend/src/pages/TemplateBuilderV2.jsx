@@ -240,9 +240,9 @@ export default function TemplateBuilderV2(){
             <label className="span-2">Task responsibility<ExpandingTextarea value={item.task_responsibility} onChange={e=>updateItem(ki,ii,{task_responsibility:e.target.value})} placeholder="What should the employee achieve?"/></label>
 
             <label>Measurement type<select value={item.input_type} onChange={e=>changeMeasurementType(ki,ii,e.target.value)}>{measurementTypes.map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></label>
-            {!choice?<label>Unit<input value={item.unit} onChange={e=>updateItem(ki,ii,{unit:e.target.value})} placeholder="units / INR / % / days"/><span className="cell-help">Shown beside target, qualifier and employee input.</span></label>:<label>KPI marks<input value="100" disabled/><span className="cell-help">Every dropdown result maps to marks out of 100.</span></label>}
+            {!choice?<label>Unit<input value={item.unit} onChange={e=>updateItem(ki,ii,{unit:e.target.value})} placeholder="units / INR / % / days"/><span className="cell-help">Shown beside target, qualifier and employee input.</span></label>:<label>KPI weightage<input value="100" disabled/><span className="cell-help">Every dropdown result maps to weightage out of 100.</span></label>}
             {!choice?<label>Scoring direction<select value={item.direction} onChange={e=>updateItem(ki,ii,{direction:e.target.value})}><option value="higher">Higher result is better</option><option value="lower">Lower result is better</option></select></label>:<label>Scoring method<input value="Result → marks / 100" disabled/></label>}
-            <label>KPI marks<input value="100" disabled/><span className="cell-help">Fixed at 100 for every KPI.</span></label>
+            <label>KPI weightage<input value="100" disabled/><span className="cell-help">Fixed at 100 for every KPI.</span></label>
 
             {!choice?<>
               <label>Target value for 100 marks<input type="number" min="1" step="1" value={item.target_value} onChange={e=>updateItem(ki,ii,{target_value:e.target.value===''?0:whole(e.target.value)})} placeholder="100"/><span className="cell-help">Example: Sales target 100000 INR = 100 marks.</span></label>
