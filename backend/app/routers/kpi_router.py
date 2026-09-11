@@ -680,17 +680,58 @@ def assign(payload: AssignmentIn, db: Session = Depends(get_db), actor=Depends(a
         raise HTTPException(409, "Cannot assign KPI to a closed cycle")
     if employee.kpi_template_id != template.id and not _template_matches_employee(template, employee):
         raise HTTPException(400, "Template hierarchy does not match this employee")
-    a = KpiAssignment(**payload.model_dump())
-    db.add(a)
+
+    existing = db.scalar(
+        select(KpiAssignment).where(
+            KpiAssignment.cycle_id == payload.cycle_id,
+            KpiAssignment.user_id == payload.user_id,
+        )
+    )
+    replaced = False
+    if existing:
+        if existing.status in {
+            AssignmentStatus.submitted,
+            AssignmentStatus.manager_reviewed,
+            AssignmentStatus.finalized,
+        }:
+            raise HTTPException(
+                409,
+                "This employee already has a submitted KPI for the selected cycle. Historical KPI records cannot be replaced.",
+            )
+        has_response = db.scalar(
+            select(KpiResponse.id).where(KpiResponse.assignment_id == existing.id).limit(1)
+        )
+        has_review = db.scalar(
+            select(KpiReview.id).where(KpiReview.assignment_id == existing.id).limit(1)
+        )
+        if has_response or has_review:
+            raise HTTPException(
+                409,
+                "This employee already started this KPI. The template cannot be replaced without losing entered KPI data.",
+            )
+        existing.template_id = template.id
+        existing.status = AssignmentStatus.not_started
+        existing.calculated_score = 0
+        existing.manager_score = None
+        existing.final_score = None
+        a = existing
+        replaced = True
+    else:
+        a = KpiAssignment(**payload.model_dump())
+        db.add(a)
+
     db.flush()
-    audit(db, actor.id, "assign", "kpi_assignment", a.id)
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(409, "This employee already has a KPI assignment for the selected cycle")
+    audit(
+        db,
+        actor.id,
+        "replace_assignment_template" if replaced else "assign",
+        "kpi_assignment",
+        a.id,
+        {"template_id": template.id, "cycle_id": cycle.id, "employee_id": employee.id},
+    )
+    db.commit()
     _notify(employee, f"KPI assigned - {cycle.name}", f"Your {cycle.name} KPI is ready. Open {settings.frontend_url}/kpi-input to complete it.")
-    return {"id": a.id, "status": a.status.value}
+    return {"id": a.id, "status": a.status.value, "replaced": replaced}
 
 
 @router.post("/assignments/auto")
