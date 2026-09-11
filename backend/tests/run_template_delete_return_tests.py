@@ -34,10 +34,15 @@ from app.models import (
     TemplateStatus,
     User,
 )
+from app.routers import kpi_router as kpi_router_module
 from app.routers.kpi_router import _purge_template_dependencies
 from app.routers.kpi_v2_enhancements import _dashboard_visible_assignments
 from app.routers.relationship_review_override import _complete_manager_review, _load_assignment
 from app.schemas import ReviewIn
+
+# Notifications are best-effort workflow side effects; keep this regression test
+# isolated from SMTP/network configuration.
+kpi_router_module._notify = lambda *args, **kwargs: None
 
 Base.metadata.create_all(bind=engine)
 
