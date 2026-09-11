@@ -497,6 +497,32 @@ def _complete_manager_review(
         raise HTTPException(403, "Only the person selected in Reports To, HR, or Super Admin can review this KPI.")
 
     superadmin = _is_superadmin(user)
+
+    # Return-to-Employee is deliberately independent of the cycle edit lock.
+    # Once the employee has submitted, the direct reporting manager or Super
+    # Admin may return it for correction until finalization. HR can still review
+    # and finalize through its normal workflow, but cannot impersonate Reports To.
+    if payload.decision == "rejected":
+        if assignment.status == AssignmentStatus.finalized:
+            raise HTTPException(409, "Finalized KPI cannot be returned to the employee. Reopen it first if a correction is required.")
+        if assignment.status not in {AssignmentStatus.submitted, AssignmentStatus.manager_reviewed}:
+            raise HTTPException(409, "Employee submission is required before this KPI can be returned.")
+        if not (superadmin or _is_direct_reviewer(user, assignment)):
+            raise HTTPException(403, "Only the Reporting Manager or Super Admin can return this KPI to the employee.")
+
+        stage = "superadmin_manager" if superadmin else "manager"
+        assignment.status = AssignmentStatus.draft
+        _clear_manager_review(assignment)
+        db.add(KpiReview(assignment_id=assignment.id, reviewer_id=user.id, stage=stage, **payload.model_dump()))
+        audit(db, user.id, "manager_reject", "kpi_assignment", assignment.id, {"reports_to_user_id": assignment.user.manager_id})
+        db.commit()
+        kpi_router._notify(
+            assignment.user,
+            f"KPI returned - {assignment.cycle.name}",
+            payload.comments or "Your KPI was returned for correction.",
+        )
+        return {"ok": True, "status": assignment.status.value}
+
     if assignment.cycle.is_locked and not superadmin:
         raise HTTPException(409, "This KPI cycle has been locked by Super Admin.")
     if assignment.cycle.status == CycleStatus.closed and not superadmin:
@@ -509,21 +535,6 @@ def _complete_manager_review(
         raise HTTPException(409, "Employee submission is required first")
 
     stage = "superadmin_manager" if superadmin else ("hr_manager" if user.role == Role.hr else "manager")
-
-    if payload.decision == "rejected":
-        if assignment.status == AssignmentStatus.finalized and not superadmin:
-            raise HTTPException(409, "Finalized KPI cannot be returned by this reviewer.")
-        assignment.status = AssignmentStatus.draft
-        _clear_manager_review(assignment)
-        db.add(KpiReview(assignment_id=assignment.id, reviewer_id=user.id, stage=stage, **payload.model_dump()))
-        audit(db, user.id, "manager_reject", "kpi_assignment", assignment.id, {"reports_to_user_id": assignment.user.manager_id})
-        db.commit()
-        kpi_router._notify(
-            assignment.user,
-            f"KPI returned - {assignment.cycle.name}",
-            payload.comments or "Your KPI was returned for correction.",
-        )
-        return {"ok": True, "status": assignment.status.value}
 
     response_map = {r.kpi_item_id: r for r in assignment.responses}
     items = [item for kra in assignment.template.kras for item in kra.items]
