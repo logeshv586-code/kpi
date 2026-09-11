@@ -27,18 +27,18 @@ review._remove_route(kpi_submit_override.router, _SUBMIT_PATH, {"POST"})
 
 
 def _review_already_submitted(assignment, user: User) -> bool:
-    """Return True when this non-Super-Admin reviewer has already submitted."""
+    """Return True when this reviewer is not permitted to edit because the record is finalized."""
     if review._is_superadmin(user):
         return False
     if not review._can_review(user, assignment):
         return False
-    return assignment.status in {AssignmentStatus.manager_reviewed, AssignmentStatus.finalized}
+    return assignment.status == AssignmentStatus.finalized
 
 
 def _raise_review_locked():
     raise HTTPException(
         409,
-        "Manager Review has already been submitted and is locked. Only Super Admin can change the Manager Score now.",
+        "This KPI review is finalized and locked. Only Super Admin can change the score now.",
     )
 
 
@@ -49,14 +49,14 @@ def locked_relationship_get_assignment(
     user: User = Depends(get_current_user),
 ):
     data = review.relationship_get_assignment(assignment_id, db, user)
-    if not review._is_superadmin(user) and data.get("status") in {
-        AssignmentStatus.manager_reviewed.value,
-        AssignmentStatus.finalized.value,
-    }:
+    is_finalized = data.get("status") == AssignmentStatus.finalized.value
+    if is_finalized and not review._is_superadmin(user):
         data["can_edit_manager_score"] = False
         data["manager_review_submitted"] = True
     else:
-        data["manager_review_submitted"] = False
+        cycle_open = not data.get("is_locked") and data.get("cycle_status") != "closed"
+        data["can_edit_manager_score"] = bool(data.get("can_review") and (review._is_superadmin(user) or cycle_open))
+        data["manager_review_submitted"] = (data.get("status") == AssignmentStatus.manager_reviewed.value)
     return data
 
 
@@ -85,7 +85,7 @@ def locked_relationship_manager_review(
     assignment = review._load_assignment(db, assignment_id)
     if not assignment:
         raise HTTPException(404, "Assignment not found")
-    if _review_already_submitted(assignment, user):
+    if payload.decision != "rejected" and _review_already_submitted(assignment, user):
         _raise_review_locked()
     return review._complete_manager_review(assignment, payload, db, user)
 

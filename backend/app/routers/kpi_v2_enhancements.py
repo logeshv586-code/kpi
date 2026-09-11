@@ -518,6 +518,7 @@ def review_matrix(db: Session = Depends(get_db), user: User = Depends(get_curren
             "month": cycle.month.isoformat(),
             "review_type": review_type,
             "financial_year": getattr(cycle, "financial_year", None) or _financial_year(cycle.month),
+            "status": cycle.status.value,
         }
         employee = assignment.user
         designation = employee.designation
@@ -562,6 +563,7 @@ def review_matrix(db: Session = Depends(get_db), user: User = Depends(get_curren
                     reasons.append(f"Maximum {float(maximum):g}{suffix} exceeded")
                 failures.append(f"{item.question}: {'; '.join(reasons) or status['reason']}{actual_text}")
         threshold_failures[employee.id][key] = failures
+        scores[employee.id][key] = 0 if failures and _official_score(assignment) is not None else _official_score(assignment)
 
     periods = sorted(
         period_by_id.values(),

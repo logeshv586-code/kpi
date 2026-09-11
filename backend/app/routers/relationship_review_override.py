@@ -120,6 +120,20 @@ def _employee_answer_present(item: KpiItem, response: KpiResponse | None) -> boo
     return response.actual_numeric is not None
 
 
+def _has_threshold_failure(assignment: KpiAssignment) -> bool:
+    is_reviewed = assignment.status in {AssignmentStatus.manager_reviewed, AssignmentStatus.finalized} or assignment.manager_score is not None
+    for r in assignment.responses:
+        item = r.item
+        if not item:
+            continue
+        actual = r.manager_actual_numeric if is_reviewed and r.manager_actual_numeric is not None else r.actual_numeric
+        if actual is not None:
+            st = threshold_status(item, float(actual))
+            if st.get("passed") is False:
+                return True
+    return False
+
+
 def _recalc_scores(db: Session, assignment: KpiAssignment) -> tuple[float, float | None]:
     employee_total = 0.0
     manager_total = 0.0
@@ -127,14 +141,16 @@ def _recalc_scores(db: Session, assignment: KpiAssignment) -> tuple[float, float
     for response in assignment.responses:
         response.score = calculate_item_score(response.item, response, is_manager=False)
         manager_present = _manager_answer_present(response.item, response)
-        response.manager_score = calculate_item_score(response.item, response, is_manager=True) if manager_present else 0.0
+        response.manager_score = calculate_item_score(response.item, response, is_manager=True, gate_threshold=False) if manager_present else 0.0
         employee_total += response.score
         manager_total += response.manager_score
         has_manager_input = has_manager_input or manager_present
 
     assignment.calculated_score = round(min(employee_total, 100.0), 2)
     assignment.manager_score = round(min(manager_total, 100.0), 2) if has_manager_input else None
-    if assignment.status == AssignmentStatus.finalized and assignment.manager_score is not None:
+    if _has_threshold_failure(assignment):
+        assignment.final_score = 0.0
+    elif assignment.status == AssignmentStatus.finalized and assignment.manager_score is not None:
         # Manager Score is the official score. Super Admin changes to Manager
         # Score on a finalized record must remain reflected in Final Score.
         assignment.final_score = assignment.manager_score
@@ -233,6 +249,8 @@ def _progress(assignment: KpiAssignment) -> int:
 
 
 def _official_score(assignment: KpiAssignment) -> float | None:
+    if _has_threshold_failure(assignment):
+        return 0.0
     if assignment.final_score is not None:
         return assignment.final_score
     if assignment.status == AssignmentStatus.manager_reviewed and assignment.manager_score is not None:
@@ -684,11 +702,11 @@ def relationship_reopen(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    if not _is_superadmin(user):
-        raise HTTPException(403, "Only Super Admin can reopen KPI assignments.")
     assignment = _load_assignment(db, assignment_id)
     if not assignment:
         raise HTTPException(404, "Assignment not found")
+    if not (_is_admin_or_hr(user) or _is_direct_reviewer(user, assignment)):
+        raise HTTPException(403, "Only Admin, HR, or Reporting Manager can reopen KPI assignments.")
     assignment.status = AssignmentStatus.draft
     _clear_manager_review(assignment)
     audit(db, user.id, "reopen", "kpi_assignment", assignment.id, {"reason": payload.reason})

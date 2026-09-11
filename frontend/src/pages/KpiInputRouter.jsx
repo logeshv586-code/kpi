@@ -34,8 +34,8 @@ function Calculated({item,value,prefix=''}){
   const raw=value?.[`${prefix}actual_numeric`]
   if(raw===null||raw===undefined||raw==='')return <span className="cell-help">—</span>
   if(isMeasurementTarget(item)){
-    const calculated=kpiScore100(item,value,prefix),status=qualificationStatus(item,value,prefix)
-    return <div><strong>{calculated}</strong> / 100{status.passed===false?<div className="threshold-not-achieved">Not qualified → 0</div>:<div className="threshold-achieved">{calculated===100?'Target achieved':'Calculated from target'}</div>}</div>
+    const rawScore=kpiScore100(item,value,prefix,false),status=qualificationStatus(item,value,prefix)
+    return <div><strong>{status.passed===false?0:rawScore}</strong> / 100{prefix==='manager_'&&status.passed===false?` (put: ${rawScore})`:''}{status.passed===false?<div className="threshold-not-achieved">Minimum not achieved → 0</div>:<div className="threshold-achieved">{rawScore===100?'Target achieved':'Calculated from target'}</div>}</div>
   }
   if(isKraAverage100(item)){
     const calculated=kpiScore100(item,value,prefix),failed=Number(raw)<minimumScore(item)
@@ -88,10 +88,13 @@ function ReviewerWorkspace({initialList,onListChange}){
 
   const items=useMemo(()=>assignment?assignment.template.kras.flatMap(kra=>kra.items):[],[assignment])
   const managerReady=items.length>0&&items.every(item=>{const v=values[item.id]||{};return isChoice(item)?Boolean(v.manager_selected_option):v.manager_actual_numeric!==null&&v.manager_actual_numeric!==undefined&&v.manager_actual_numeric!==''})
-  const liveManagerScore=assignment?templateScore(assignment.template.kras,values,'manager_'):0
+  const liveManagerScore=assignment?templateScore(assignment.template.kras,values,'manager_',false):0
   const liveStaffScore=assignment?templateScore(assignment.template.kras,values):0
   const canEdit=Boolean(assignment?.can_edit_manager_score),canReview=Boolean(assignment?.can_review)
-  const isSuperAdmin=user?.role==='superadmin',officialScore=assignment?.final_score??(assignment?.status==='manager_reviewed'?assignment?.manager_score:null)
+  const isSuperAdmin=user?.role==='superadmin'
+  const hasThresholdFailure=items.some(item=>qualificationStatus(item,values,'manager_').passed===false)
+  const rawOfficial=assignment?.final_score??(assignment?.status==='manager_reviewed'?assignment?.manager_score:null)
+  const officialScore=hasThresholdFailure&&rawOfficial!==null?0:rawOfficial
   const cap=assignment?.subordinate_score_cap,pendingSubordinates=Number(assignment?.subordinate_pending_count||0)
 
   function setManagerValue(itemId,patch){setValues(currentValues=>({...currentValues,[itemId]:{...currentValues[itemId],...patch,kpi_item_id:itemId}}));setError('');setMessage('')}
@@ -106,7 +109,17 @@ function ReviewerWorkspace({initialList,onListChange}){
     setBusy(true);setError('');setMessage('')
     try{await api.put(`/kpi/assignments/${id}/responses`,payload());const{data}=await api.post(`/kpi/assignments/${id}/manager-review`,{decision:'approved',comments:isSuperAdmin?'Manager Score reviewed/updated by Super Admin.':'Manager Score submitted by reporting person.'});setMessage(`Manager review completed. Official Manager Score: ${scoreText(data.manager_score??liveManagerScore)}/100.`);await loadAssignment();await refreshList()}catch(e){setError(getError(e))}finally{setBusy(false)}
   }
-  async function returnToEmployee(){const comments=window.prompt('Reason for returning this KPI to the employee:','Please update the KPI achieved values and resubmit.');if(comments===null)return;setBusy(true);setError('');try{await api.post(`/kpi/assignments/${id}/manager-review`,{decision:'rejected',comments});setMessage('KPI returned to the employee for correction.');await loadAssignment();await refreshList()}catch(e){setError(getError(e))}finally{setBusy(false)}}
+  async function returnToEmployee(){
+    const comments=window.prompt('Reason for returning this KPI to the employee:','Please update the KPI achieved values and resubmit.');
+    if(comments===null)return;
+    setBusy(true);setError('');
+    try{
+      await api.post(`/kpi/assignments/${id}/manager-review`,{decision:'rejected',comments:comments||'Returned to employee for correction.'});
+      setMessage('KPI returned to the employee for correction.');
+      await loadAssignment();
+      await refreshList()
+    }catch(e){setError(getError(e))}finally{setBusy(false)}
+  }
   async function downloadPdf(){if(!id)return;try{const response=await api.get(`/kpi/assignments/${id}/pdf`,{responseType:'blob'}),blob=new Blob([response.data],{type:'application/pdf'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`kpi_report_${(assignment?.employee||'employee').toLowerCase().replace(/[^a-z0-9]+/g,'_')}.pdf`;a.click();URL.revokeObjectURL(url)}catch(e){setError(getError(e))}}
 
   if(!assignment)return<Loader/>
@@ -127,7 +140,7 @@ function ReviewerWorkspace({initialList,onListChange}){
     {canReview&&!canEdit?<div className="locked-note" style={{marginBottom:'14px'}}>{assignment.status==='draft'||assignment.status==='not_started'?'Employee must submit the KPI before Manager input can be entered.':assignment.status==='finalized'&&!isSuperAdmin?'This KPI is finalized. Only Super Admin can change the Manager Score.':'Manager Score editing is currently locked for this KPI.'}</div>:null}
 
     {assignment.template.kras.map(kra=>{
-      const staffAverage=kraAverage(kra,values),managerAverage=kraAverage(kra,values,'manager_'),staffKra=kraScore(kra,values),managerKra=kraScore(kra,values,'manager_')
+      const staffAverage=kraAverage(kra,values),managerAverage=kraAverage(kra,values,'manager_',false),staffKra=kraScore(kra,values),managerKra=kraScore(kra,values,'manager_',false)
       return <Card key={kra.id}><div className="kra-review-head"><div><strong>{kra.name}</strong><div className="muted">{kra.items.length} KPI{kra.items.length===1?'':'s'} · each carries 100 marks</div></div><div className="kra-score-summary"><div className="weight-chip">KRA weight {whole(kra.weight)} / 100</div><div>Staff avg {scoreText(staffAverage)} → {scoreText(staffKra)}</div><div>Manager avg {scoreText(managerAverage)} → {scoreText(managerKra)}</div></div></div><div className="table-wrap"><table className="kpi-input-table"><thead><tr><th>KPI parameter & task</th><th>Measurement / target</th><th>Qualifying value</th><th>Staff achieved</th><th>Staff marks</th><th>Manager achieved</th><th>Manager marks</th><th>Employee notes</th></tr></thead><tbody>{kra.items.map(item=>{
         const v=values[item.id]||{},qualifier=qualifyingValue(item)
         return <tr key={item.id}>
@@ -143,7 +156,7 @@ function ReviewerWorkspace({initialList,onListChange}){
       })}</tbody></table></div></Card>
     })}
 
-    {canReview?<div className="footer-actions sticky-actions"><button className="secondary" disabled={busy||!canEdit||assignment.status==='finalized'} onClick={returnToEmployee}><RotateCcw size={16}/>Return to Employee</button><div className="responsive-actions"><button className="secondary" disabled={busy||!canEdit} onClick={saveManagerScore}><Save size={16}/>{busy?'Saving...':'Save Manager Score'}</button><button className="primary" disabled={busy||!canEdit||!managerReady||pendingSubordinates>0||(cap!==null&&cap!==undefined&&liveManagerScore>Number(cap))} onClick={submitManagerReview}><Send size={16}/>{assignment.status==='finalized'&&isSuperAdmin?'Update Official Manager Score':'Submit Manager Review'}</button></div></div>:null}
+    {canReview?<div className="footer-actions sticky-actions"><button className="secondary" disabled={busy||(assignment.status==='finalized'&&!isSuperAdmin)} onClick={returnToEmployee}><RotateCcw size={16}/>Return to Employee</button><div className="responsive-actions"><button className="secondary" disabled={busy||!canEdit} onClick={saveManagerScore}><Save size={16}/>{busy?'Saving...':'Save Manager Score'}</button><button className="primary" disabled={busy||!canEdit||!managerReady||pendingSubordinates>0||(cap!==null&&cap!==undefined&&liveManagerScore>Number(cap))} onClick={submitManagerReview}><Send size={16}/>{assignment.status==='finalized'&&isSuperAdmin?'Update Official Manager Score':'Submit Manager Review'}</button></div></div>:null}
   </>
 }
 

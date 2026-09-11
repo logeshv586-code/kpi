@@ -57,7 +57,21 @@ export default function KpiInput(){
   const [showGuide,setShowGuide]=useState(()=>localStorage.getItem('kpi_guide_dismissed')!=='1')
   const id=params.get('assignment')
 
-  const loadList=()=>api.get('/kpi/my').then(r=>{setList(r.data);if(!id&&r.data[0])setParams({assignment:r.data[0].id})}).catch(e=>setError(getError(e)))
+  const currentMonthStr = new Date().toISOString().slice(0, 7)
+  const getPreferredAssignment = (items) => {
+    if (!items || !items.length) return null
+    return items.find(a => (a.month || '').startsWith(currentMonthStr)) ||
+           items.find(a => a.cycle_status === 'running') ||
+           items[0]
+  }
+
+  const loadList=()=>api.get('/kpi/my').then(r=>{
+    setList(r.data)
+    if(!id&&r.data[0]){
+      const preferred = getPreferredAssignment(r.data)
+      if(preferred) setParams({assignment:preferred.id})
+    }
+  }).catch(e=>setError(getError(e)))
   useEffect(()=>{loadList()},[])
   useEffect(()=>{if(params.get('guide')==='1')setShowGuide(true)},[params])
   
@@ -104,11 +118,34 @@ export default function KpiInput(){
   const personAssignments=useMemo(()=>departmentAssignments.filter(a=>`${a.employee}::${a.designation||a.template?.name||''}`===selectedPerson).sort((a,b)=>String(b.month||assignmentMonth(b)).localeCompare(String(a.month||assignmentMonth(a))||String(b.id).localeCompare(String(a.id)))),[departmentAssignments,selectedPerson])
   const selectedSummary=list?.find(a=>String(a.id)===String(id))
 
-  useEffect(()=>{if(!list?.length)return;const current=selectedSummary||list[0];setSelectedDepartment(assignmentDepartment(current));setSelectedPerson(`${current.employee}::${current.designation||current.template?.name||''}`);if(!id)setParams({assignment:current.id})},[list,id])
-  useEffect(()=>{if(selectedDepartment&&!people.some(p=>p.key===selectedPerson)){const first=people[0];if(first){setSelectedPerson(first.key);const firstAssignment=departmentAssignments.find(a=>`${a.employee}::${a.designation||a.template?.name||''}`===first.key);if(firstAssignment)setParams({assignment:firstAssignment.id})}}},[selectedDepartment,people,selectedPerson,departmentAssignments])
+  useEffect(()=>{
+    if(!list?.length)return
+    const current=selectedSummary||getPreferredAssignment(list)||list[0]
+    setSelectedDepartment(assignmentDepartment(current))
+    setSelectedPerson(`${current.employee}::${current.designation||current.template?.name||''}`)
+    if(!id&&current)setParams({assignment:current.id})
+  },[list,id])
+  useEffect(()=>{if(selectedDepartment&&!people.some(p=>p.key===selectedPerson)){const first=people[0];if(first){setSelectedPerson(first.key);const matching=departmentAssignments.filter(a=>`${a.employee}::${a.designation||a.template?.name||''}`===first.key);const preferred=getPreferredAssignment(matching)||matching[0];if(preferred)setParams({assignment:preferred.id})}}},[selectedDepartment,people,selectedPerson,departmentAssignments])
 
-  function selectDepartment(value){setSelectedDepartment(value);setSelectedDateLabel('');const first=(list||[]).filter(a=>assignmentDepartment(a)===value).sort((a,b)=>compareText(a.employee,b.employee))[0];if(first){setSelectedPerson(`${first.employee}::${first.designation||first.template?.name||''}`);setParams({assignment:first.id})}}
-  function selectPerson(value){setSelectedPerson(value);setSelectedDateLabel('');const first=departmentAssignments.find(a=>`${a.employee}::${a.designation||a.template?.name||''}`===value);if(first)setParams({assignment:first.id})}
+  function selectDepartment(value){
+    setSelectedDepartment(value)
+    setSelectedDateLabel('')
+    const matching=(list||[]).filter(a=>assignmentDepartment(a)===value)
+    const first=matching.sort((a,b)=>compareText(a.employee,b.employee))[0]
+    if(first){
+      setSelectedPerson(`${first.employee}::${first.designation||first.template?.name||''}`)
+      const personList=matching.filter(a=>`${a.employee}::${a.designation||a.template?.name||''}`===`${first.employee}::${first.designation||first.template?.name||''}`)
+      const preferred=getPreferredAssignment(personList)||first
+      setParams({assignment:preferred.id})
+    }
+  }
+  function selectPerson(value){
+    setSelectedPerson(value)
+    setSelectedDateLabel('')
+    const matching=departmentAssignments.filter(a=>`${a.employee}::${a.designation||a.template?.name||''}`===value)
+    const preferred=getPreferredAssignment(matching)||matching[0]
+    if(preferred)setParams({assignment:preferred.id})
+  }
 
   const calendarDays=useMemo(()=>Array.from({length:new Date(calendarYear,calendarMonth+1,0).getDate()},(_,i)=>i+1),[calendarYear,calendarMonth])
 

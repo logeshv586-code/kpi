@@ -286,7 +286,7 @@ def _threshold_gate(item: KpiItem, actual: float) -> bool:
     return status.get("passed") is not False
 
 
-def calculate_kpi_score_100(item: KpiItem, response: KpiResponse, is_manager: bool = False) -> int:
+def calculate_kpi_score_100(item: KpiItem, response: KpiResponse, is_manager: bool = False, gate_threshold: bool = True) -> int:
     """Return the whole-number KPI mark before KRA weighting."""
     cfg = item_config(item)
     meta = cfg["meta"]
@@ -297,7 +297,7 @@ def calculate_kpi_score_100(item: KpiItem, response: KpiResponse, is_manager: bo
             return 0
         raw = max(0.0, min(100.0, float(cfg["score_map"].get(selected, 0))))
         minimum = float(meta.get("minimum_score", 0) or 0)
-        if meta.get("scoring_model") == KRA_AVERAGE_100_MODEL and raw < minimum:
+        if gate_threshold and meta.get("scoring_model") == KRA_AVERAGE_100_MODEL and raw < minimum:
             return 0
         return int(round(raw))
 
@@ -308,7 +308,7 @@ def calculate_kpi_score_100(item: KpiItem, response: KpiResponse, is_manager: bo
 
     if meta.get("scoring_model") == KRA_AVERAGE_100_MODEL:
         if meta.get("scoring_method") == MEASUREMENT_TARGET_METHOD:
-            if not _threshold_gate(item, actual):
+            if gate_threshold and not _threshold_gate(item, actual):
                 return 0
             target = float(item.target_value or 0)
             if item.direction == "lower":
@@ -322,14 +322,14 @@ def calculate_kpi_score_100(item: KpiItem, response: KpiResponse, is_manager: bo
                 pct = (actual / target * 100.0) if target > 0 else (100.0 if actual > 0 else 0.0)
             return int(round(max(0.0, min(100.0, pct))))
 
-        if not _threshold_gate(item, actual):
+        if gate_threshold and not _threshold_gate(item, actual):
             return 0
         return int(round(max(0.0, min(actual, 100.0))))
 
     return calculate_achievement_percent(item, response, is_manager=is_manager)
 
 
-def calculate_item_score(item: KpiItem, response: KpiResponse, is_manager: bool = False) -> float:
+def calculate_item_score(item: KpiItem, response: KpiResponse, is_manager: bool = False, gate_threshold: bool = True) -> float:
     cfg = item_config(item)
     meta = cfg["meta"]
     scoring_method = meta.get("scoring_method", "target_ratio")
@@ -343,10 +343,10 @@ def calculate_item_score(item: KpiItem, response: KpiResponse, is_manager: bool 
         actual = float(actual_val)
 
         if meta.get("scoring_model") == KRA_AVERAGE_100_MODEL:
-            score_100 = calculate_kpi_score_100(item, response, is_manager=is_manager)
+            score_100 = calculate_kpi_score_100(item, response, is_manager=is_manager, gate_threshold=gate_threshold)
             return _round_item_mark(item, float(item.weight) * score_100 / 100.0)
 
-        if not _threshold_gate(item, actual):
+        if gate_threshold and not _threshold_gate(item, actual):
             return 0.0
 
         if scoring_method == "threshold":
@@ -376,7 +376,7 @@ def calculate_item_score(item: KpiItem, response: KpiResponse, is_manager: bool 
 
     if item.input_type in {"choice", "yesno"}:
         if meta.get("scoring_model") == KRA_AVERAGE_100_MODEL:
-            score_100 = calculate_kpi_score_100(item, response, is_manager=is_manager)
+            score_100 = calculate_kpi_score_100(item, response, is_manager=is_manager, gate_threshold=gate_threshold)
             return _round_item_mark(item, float(item.weight) * score_100 / 100.0)
         selected = response.manager_selected_option if is_manager else response.selected_option
         if not selected:

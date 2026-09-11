@@ -12,7 +12,7 @@ const whole=value=>Math.round(Number(value||0))
 export default function Reports(){
   const{user}=useAuth()
   const[data,setData]=useState(null),[pending,setPending]=useState(null)
-  const[reviewType,setReviewType]=useState('monthly'),[financialYear,setFinancialYear]=useState(''),[periodKey,setPeriodKey]=useState('all'),[department,setDepartment]=useState('All'),[error,setError]=useState('')
+  const[reviewType,setReviewType]=useState('monthly'),[financialYear,setFinancialYear]=useState(''),[periodKey,setPeriodKey]=useState(''),[department,setDepartment]=useState('All'),[error,setError]=useState('')
 
   const isOrgAdmin=['superadmin','hr'].includes(user?.role)
   const title=isOrgAdmin?'Performance Reports':(user?.role==='manager'||user?.is_reporting_manager)?'Team Performance Reports':'My Performance Report'
@@ -44,7 +44,13 @@ export default function Reports(){
   const periodOptions = useMemo(() => {
     if (reviewType === 'monthly') {
       const monthPeriods = filteredPeriods.filter(p => p.review_type === 'monthly')
-      return monthPeriods.map(p => ({ key: p.key, label: p.label || p.name, keys: [p.key] }))
+      return monthPeriods.map(p => ({
+        key: p.key,
+        label: p.label || p.name,
+        keys: [p.key],
+        status: p.status,
+        month: p.month,
+      }))
     }
 
     if (reviewType === 'quarterly') {
@@ -62,7 +68,9 @@ export default function Reports(){
         return {
           key: qLabel,
           label: `${qLabel} · ${financialYear || 'FY'}`,
-          keys: matching.map(p => p.key)
+          keys: matching.map(p => p.key),
+          month: matching[0]?.month,
+          status: matching.some(p => p.status === 'running') ? 'running' : 'upcoming'
         }
       })
     }
@@ -80,7 +88,9 @@ export default function Reports(){
         return {
           key: hLabel,
           label: `${hLabel} · ${financialYear || 'FY'}`,
-          keys: matching.map(p => p.key)
+          keys: matching.map(p => p.key),
+          month: matching[0]?.month,
+          status: matching.some(p => p.status === 'running') ? 'running' : 'upcoming'
         }
       })
     }
@@ -89,7 +99,8 @@ export default function Reports(){
       return [{
         key: 'annual_full',
         label: `Annual (Apr–Mar) · ${financialYear || 'FY'}`,
-        keys: filteredPeriods.map(p => p.key)
+        keys: filteredPeriods.map(p => p.key),
+        status: filteredPeriods.some(p => p.status === 'running') ? 'running' : 'upcoming'
       }]
     }
 
@@ -97,8 +108,19 @@ export default function Reports(){
   }, [reviewType, filteredPeriods, financialYear])
 
   useEffect(() => {
-    if (periodKey !== 'all' && !periodOptions.some(p => p.key === periodKey)) {
-      setPeriodKey('all')
+    if (!periodOptions.length) return
+    if (!periodKey) {
+      const currentMonthStr = new Date().toISOString().slice(0, 7)
+      const match = periodOptions.find(p => p.status === 'running') ||
+                    periodOptions.find(p => p.month && p.month.startsWith(currentMonthStr)) ||
+                    periodOptions[0]
+      setPeriodKey(match ? match.key : 'all')
+    } else if (periodKey !== 'all' && !periodOptions.some(p => p.key === periodKey)) {
+      const currentMonthStr = new Date().toISOString().slice(0, 7)
+      const match = periodOptions.find(p => p.status === 'running') ||
+                    periodOptions.find(p => p.month && p.month.startsWith(currentMonthStr)) ||
+                    periodOptions[0]
+      setPeriodKey(match ? match.key : 'all')
     }
   }, [periodOptions, periodKey])
 
@@ -129,8 +151,13 @@ export default function Reports(){
       const values=Object.entries(r.scores||{}).filter(([key,value])=>selectedKeys.has(key)&&value!==null&&value!==undefined).map(([,value])=>Number(value)).filter(Number.isFinite)
       const empValues=Object.entries(r.employee_scores||{}).filter(([key,value])=>selectedKeys.has(key)&&value!==null&&value!==undefined).map(([,value])=>Number(value)).filter(Number.isFinite)
       const mgrValues=Object.entries(r.manager_scores||{}).filter(([key,value])=>selectedKeys.has(key)&&value!==null&&value!==undefined).map(([,value])=>Number(value)).filter(Number.isFinite)
-      const thresholdIssues=Object.entries(r.threshold_failures||{}).filter(([key])=>selectedKeys.has(key)).flatMap(([,issues])=>issues||[])
-      const score=values.length?whole(values.reduce((s,v)=>s+v,0)/values.length):null
+      const thresholdIssues=selectedKeys.size
+        ? Object.entries(r.threshold_failures||{}).filter(([key])=>selectedKeys.has(key)).flatMap(([,issues])=>issues||[])
+        : Object.values(r.threshold_failures||{}).flatMap(issues=>issues||[])
+      let score=values.length?whole(values.reduce((s,v)=>s+v,0)/values.length):null
+      if(thresholdIssues.length>0&&score!==null){
+        score=0
+      }
       const empScore=empValues.length?whole(empValues.reduce((s,v)=>s+v,0)/empValues.length):null
       const mgrScore=mgrValues.length?whole(mgrValues.reduce((s,v)=>s+v,0)/mgrValues.length):null
       const ratingBand=score!=null?getRatingBand(score):'Not Evaluated'
@@ -156,7 +183,7 @@ export default function Reports(){
   function bandClass(band){if(band==='Outstanding')return'status-finalized';if(band==='Very Good'||band==='Good')return'status-manager_reviewed';if(band==='Needs Improvement')return'status-submitted';return'status-draft'}
 
   return<>
-    <PageHeader title={title} subtitle={subtitle} actions={<div className="report-actions responsive-actions"><select value={financialYear} onChange={e=>{setFinancialYear(e.target.value);setPeriodKey('all')}} aria-label="Financial year">{financialYears.map(fy=><option key={fy} value={fy}>{fy}</option>)}</select><select value={reviewType} onChange={e=>{setReviewType(e.target.value);setPeriodKey('all')}} aria-label="Review type">{availableTypes.map(type=><option key={type} value={type}>{typeLabel[type]||type}</option>)}</select><select value={periodKey} onChange={e=>setPeriodKey(e.target.value)} aria-label="Review period"><option value="all">All periods</option>{periodOptions.map(p=><option key={p.key} value={p.key}>{p.label}</option>)}</select>{departments.length>2?<select value={department} onChange={e=>setDepartment(e.target.value)} aria-label="Department"><option value="All">All departments</option>{departments.filter(d=>d!=='All').map(d=><option key={d}>{d}</option>)}</select>:null}<button className="secondary" onClick={exportCsv}><Download size={16}/>Export CSV</button></div>}/>
+    <PageHeader title={title} subtitle={subtitle} actions={<div className="report-actions responsive-actions"><select value={financialYear} onChange={e=>{setFinancialYear(e.target.value);setPeriodKey('')}} aria-label="Financial year">{financialYears.map(fy=><option key={fy} value={fy}>{fy}</option>)}</select><select value={reviewType} onChange={e=>{setReviewType(e.target.value);setPeriodKey('')}} aria-label="Review type">{availableTypes.map(type=><option key={type} value={type}>{typeLabel[type]||type}</option>)}</select><select value={periodKey} onChange={e=>setPeriodKey(e.target.value)} aria-label="Review period"><option value="all">All periods</option>{periodOptions.map(p=><option key={p.key} value={p.key}>{p.label}</option>)}</select>{departments.length>2?<select value={department} onChange={e=>setDepartment(e.target.value)} aria-label="Department"><option value="All">All departments</option>{departments.filter(d=>d!=='All').map(d=><option key={d}>{d}</option>)}</select>:null}<button className="secondary" onClick={exportCsv}><Download size={16}/>Export CSV</button></div>}/>
     <ErrorBox error={error}/>
     {!data?<Loader/>:<>
       <div className="helper-strip" style={{marginBottom:'14px'}}><strong>Report:</strong> {selectedPeriodLabel} · April–March financial year · scores rounded to whole integers.</div>

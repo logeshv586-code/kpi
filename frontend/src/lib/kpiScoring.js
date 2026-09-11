@@ -105,7 +105,7 @@ export function legacyItemScore(item,value,prefix=''){
   return whole(weight*Math.max(0,Math.min(ratio,cap)))
 }
 
-export function kpiScore100(item,value,prefix=''){
+export function kpiScore100(item,value,prefix='',gateThreshold=true){
   const v=value||{},cfg=item?.config||{}
   if(!isKraAverage100(item)){
     const weight=Number(item?.weight||0),legacy=legacyItemScore(item,value,prefix)
@@ -115,7 +115,7 @@ export function kpiScore100(item,value,prefix=''){
     const selected=v[`${prefix}selected_option`]
     if(!selected)return 0
     const raw=whole(Math.max(0,Math.min(100,Number((cfg.score_map||{})[selected]||0))))
-    return raw<minimumScore(item)?0:raw
+    return gateThreshold&&raw<minimumScore(item)?0:raw
   }
   const raw=v[`${prefix}actual_numeric`]
   if(raw===null||raw===undefined||raw==='')return 0
@@ -123,7 +123,7 @@ export function kpiScore100(item,value,prefix=''){
   if(!Number.isFinite(actual))return 0
 
   if(isMeasurementTarget(item)){
-    if(qualificationStatus(item,v,prefix).passed===false)return 0
+    if(gateThreshold&&qualificationStatus(item,v,prefix).passed===false)return 0
     const target=targetValue(item)
     if(item.direction==='lower'){
       if(actual<=target)return 100
@@ -134,23 +134,23 @@ export function kpiScore100(item,value,prefix=''){
     return whole(Math.max(0,Math.min(100,actual/target*100)))
   }
 
-  return actual<minimumScore(item)?0:Math.max(0,Math.min(100,actual))
+  return gateThreshold&&actual<minimumScore(item)?0:Math.max(0,Math.min(100,actual))
 }
 
-export function kraAverage(kra,values,prefix=''){
+export function kraAverage(kra,values,prefix='',gateThreshold=true){
   if(!kra?.items?.length)return 0
-  if(kra.items.every(isKraAverage100))return kra.items.reduce((sum,item)=>sum+kpiScore100(item,values[item.id],prefix),0)/kra.items.length
+  if(kra.items.every(isKraAverage100))return kra.items.reduce((sum,item)=>sum+kpiScore100(item,values[item.id],prefix,gateThreshold),0)/kra.items.length
   const weight=Number(kra.weight||0)
   if(weight<=0)return 0
   return kra.items.reduce((sum,item)=>sum+legacyItemScore(item,values[item.id],prefix),0)/weight*100
 }
 
-export function kraScore(kra,values,prefix=''){
+export function kraScore(kra,values,prefix='',gateThreshold=true){
   if(!kra?.items?.length)return 0
-  if(kra.items.every(isKraAverage100))return kraAverage(kra,values,prefix)*Number(kra.weight||0)/100
+  if(kra.items.every(isKraAverage100))return kraAverage(kra,values,prefix,gateThreshold)*Number(kra.weight||0)/100
   return kra.items.reduce((sum,item)=>sum+legacyItemScore(item,values[item.id],prefix),0)
 }
 
-export function templateScore(kras,values,prefix=''){
-  return Math.min(100,score2((kras||[]).reduce((sum,kra)=>sum+kraScore(kra,values,prefix),0)))
+export function templateScore(kras,values,prefix='',gateThreshold=true){
+  return Math.min(100,score2((kras||[]).reduce((sum,kra)=>sum+kraScore(kra,values,prefix,gateThreshold),0)))
 }
