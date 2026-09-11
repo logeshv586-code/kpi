@@ -5,7 +5,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
@@ -274,21 +274,78 @@ def unpublish_template(template_id: int, db: Session = Depends(get_db), user=Dep
     return {"ok": True, "status": t.status.value}
 
 
+def _purge_template_dependencies(db: Session, template_id: int) -> dict:
+    """Remove all transactional KPI data that belongs to one template.
+
+    Reports are calculated from assignments/responses, so deleting these rows is
+    the authoritative way to remove a deleted template's scores from reporting.
+    Employee-level template overrides are cleared first so the template row is
+    never left referenced by users.kpi_template_id.
+    """
+    assignment_ids = list(
+        db.scalars(select(KpiAssignment.id).where(KpiAssignment.template_id == template_id)).all()
+    )
+
+    cleared_employee_overrides = (
+        db.execute(
+            update(User)
+            .where(User.kpi_template_id == template_id)
+            .values(kpi_template_id=None)
+        ).rowcount
+        or 0
+    )
+
+    deleted_responses = 0
+    deleted_reviews = 0
+    deleted_assignments = 0
+    if assignment_ids:
+        deleted_responses = (
+            db.execute(delete(KpiResponse).where(KpiResponse.assignment_id.in_(assignment_ids))).rowcount
+            or 0
+        )
+        deleted_reviews = (
+            db.execute(delete(KpiReview).where(KpiReview.assignment_id.in_(assignment_ids))).rowcount
+            or 0
+        )
+        deleted_assignments = (
+            db.execute(delete(KpiAssignment).where(KpiAssignment.id.in_(assignment_ids))).rowcount
+            or 0
+        )
+
+    db.flush()
+    return {
+        "assignments": deleted_assignments,
+        "responses": deleted_responses,
+        "reviews": deleted_reviews,
+        "employee_overrides": cleared_employee_overrides,
+    }
+
+
 @router.delete("/templates/{template_id}")
 def delete_template(template_id: int, db: Session = Depends(get_db), user=Depends(require_tab_permission("templates", edit=True))):
-    """Remove a template and any associated assignments cleanly."""
+    """Delete an unpublished draft and purge its scores from KPI reports."""
     t = _load_template(db, template_id)
     if not t:
         raise HTTPException(404, "Template not found")
-    assignments = db.scalars(select(KpiAssignment).where(KpiAssignment.template_id == template_id)).all()
-    for a in assignments:
-        db.delete(a)
-    db.flush()
+    if t.status != TemplateStatus.draft:
+        raise HTTPException(
+            409,
+            "Only an unpublished draft KPI template can be deleted. Unpublish an active template first; archived templates are retained for history.",
+        )
+
     status = t.status.value
+    deleted = _purge_template_dependencies(db, template_id)
     db.delete(t)
-    audit(db, user.id, "delete", "kpi_template", template_id, {"status": status})
-    db.commit()
-    return {"ok": True}
+    audit(db, user.id, "delete", "kpi_template", template_id, {"status": status, "deleted": deleted})
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            409,
+            "This KPI template is still referenced by protected records and could not be deleted. Refresh the page and try again.",
+        )
+    return {"ok": True, **{f"deleted_{key}": value for key, value in deleted.items()}}
 
 
 @router.post("/templates/import-csv")
