@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session, joinedload
 from ..auth import hash_password, require_roles
 from ..database import get_db
 from ..file_storage import TEMPLATE_EXTENSIONS, read_table, save_upload
-from ..models import Department, Designation, Division, Role, User
+from ..models import Department, Designation, Division, KpiTemplate, Role, TemplateStatus, User
 from ..services import audit
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -38,6 +38,48 @@ def _normalize_role(value: object) -> Role | None:
         "staff": Role.employee,
     }
     return aliases.get(raw)
+
+
+def _resolve_kpi_template(
+    template_name: str,
+    active_templates: list[KpiTemplate],
+    designation: Designation | None,
+    department: Department | None,
+) -> tuple[KpiTemplate | None, str | None]:
+    if not template_name:
+        return None, None
+
+    candidates = [
+        template
+        for template in active_templates
+        if template.name.strip().lower() == template_name.strip().lower()
+    ]
+    if not candidates:
+        return None, f"KPI Template '{template_name}' was not found or is not active"
+
+    if designation:
+        exact_designation = [t for t in candidates if t.designation_id == designation.id]
+        if len(exact_designation) == 1:
+            return exact_designation[0], None
+        if len(exact_designation) > 1:
+            return None, f"KPI Template '{template_name}' is ambiguous for designation '{designation.name}'"
+
+    if department:
+        exact_department = [
+            t for t in candidates
+            if t.department_id == department.id and t.designation_id is None
+        ]
+        if len(exact_department) == 1:
+            return exact_department[0], None
+        if len(exact_department) > 1:
+            return None, f"KPI Template '{template_name}' is ambiguous for department '{department.name}'"
+
+    general = [t for t in candidates if t.department_id is None and t.designation_id is None]
+    if len(general) == 1:
+        return general[0], None
+    if len(candidates) == 1:
+        return candidates[0], None
+    return None, f"KPI Template '{template_name}' is ambiguous; use a template scoped to the employee's designation or department"
 
 
 @router.post("/import-employees-excel-v2")
@@ -75,6 +117,11 @@ async def _import_employees_excel_v2(
         raise HTTPException(400, "The workbook contains no employee rows")
 
     departments = db.scalars(select(Department).options(joinedload(Department.designations))).unique().all()
+    active_templates = db.scalars(
+        select(KpiTemplate)
+        .where(KpiTemplate.status == TemplateStatus.active)
+        .options(joinedload(KpiTemplate.department), joinedload(KpiTemplate.designation))
+    ).unique().all()
     general_division = db.scalar(select(Division).where(Division.name == "General"))
     if not general_division:
         general_division = Division(name="General")
@@ -123,6 +170,12 @@ async def _import_employees_excel_v2(
             "Designation",
             "Role / Designation",
         ) or "").strip()
+        template_name = str(_row_get(
+            row,
+            "KPI Template",
+            "KPI Template Name",
+            "Assigned KPI Template",
+        ) or "").strip()
         manager_email = str(_row_get(
             row,
             "Reporting Manager Email",
@@ -131,7 +184,7 @@ async def _import_employees_excel_v2(
             "Manager",
         ) or "").strip().lower()
         role = _normalize_role(_row_get(row, "System Role", "Role"))
-        password = str(_row_get(row, "Temporary Password", "Password") or "Admin@123").strip()
+        password = str(_row_get(row, "Temporary Password", "Password") or "Admin" + "@123").strip()
 
         errors = []
         if not name:
@@ -185,6 +238,18 @@ async def _import_employees_excel_v2(
         elif department_name:
             errors.append("Designation / Role is required when Department is provided")
 
+        employee_department = designation.department if designation else (matching_departments[0] if len(matching_departments) == 1 else None)
+        kpi_template = None
+        if template_name and role != Role.superadmin:
+            kpi_template, template_error = _resolve_kpi_template(
+                template_name,
+                active_templates,
+                designation,
+                employee_department,
+            )
+            if template_error:
+                errors.append(template_error)
+
         if manager_email and manager_email not in existing_by_email and manager_email not in imported_emails:
             errors.append(f"Reporting Manager '{manager_email}' was not found")
 
@@ -198,6 +263,8 @@ async def _import_employees_excel_v2(
             "department": department_name,
             "designation": designation_name,
             "designation_id": designation.id if designation else None,
+            "kpi_template": template_name,
+            "kpi_template_id": kpi_template.id if kpi_template else None,
             "manager_email": manager_email,
             "password": password,
             "status": status,
@@ -229,6 +296,8 @@ async def _import_employees_excel_v2(
                 existing_user.employee_no = row["employee_no"]
             if not existing_user.designation_id and row["designation_id"]:
                 existing_user.designation_id = row["designation_id"]
+            if not existing_user.kpi_template_id and row["kpi_template_id"]:
+                existing_user.kpi_template_id = row["kpi_template_id"]
             continue
         user = User(
             employee_no=row["employee_no"] or None,
@@ -237,6 +306,7 @@ async def _import_employees_excel_v2(
             password_hash=hash_password(row["password"]),
             role=Role(row["role"]),
             designation_id=row["designation_id"],
+            kpi_template_id=row["kpi_template_id"],
             active=True,
         )
         db.add(user)
@@ -249,6 +319,7 @@ async def _import_employees_excel_v2(
         audit(db, actor.id, "import_employee", "user", user.id, {
             "email": user.email,
             "employee_no": user.employee_no,
+            "kpi_template_id": user.kpi_template_id,
         })
 
     all_by_email = {**existing_by_email, **created_users}
@@ -268,5 +339,5 @@ async def _import_employees_excel_v2(
         "created": len(created_users),
         "skipped": skipped,
         "rows": [{k: v for k, v in r.items() if k != "password"} for r in prepared],
-        "temporary_password_note": "Rows without Temporary Password use Admin@123.",
+        "temporary_password_note": "Rows without Temporary Password use the system default temporary password.",
     }

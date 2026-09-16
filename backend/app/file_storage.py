@@ -253,25 +253,42 @@ def parse_response_rows(path: Path) -> list[dict[str, Any]]:
 def parse_template_rows(path: Path) -> list[dict[str, Any]]:
     rows = read_table(path)
     result = []
+    current_headers = {
+        "measurement type",
+        "kpi weightage",
+        "target value for 100 marks",
+        "qualifying value",
+        "review frequency",
+        "dropdown results and marks",
+    }
     for row in rows:
         kra = _get_value(row, "KRA Name", "KRA", "Key Result Area", "Goal")
         kpi = _get_value(row, "KPI Name", "KPI", "Key Performance Indicator", "Parameter", "KPI Parameter")
         if kra in (None, "") or kpi in (None, ""):
             continue
+        normalized_headers = {_normalize_header(key) for key in row}
         result.append({
             "kra": str(kra).strip(),
             "kpi": str(kpi).strip(),
-            "kra_weight": _get_value(row, "KRA Weight / Marks", "KRA Weight", "KRA Weightage", "KRA %", "KRA Marks"),
-            "kpi_weight": _get_value(row, "Weight / Marks", "KPI Weight / Marks", "KPI Weight", "Weight", "Weightage", "KPI %"),
+            "kra_weight": _get_value(row, "KRA Weightage", "KRA Weight / Marks", "KRA Weight", "KRA %", "KRA Marks"),
+            "kpi_weight": _get_value(row, "KPI Weightage", "Weight / Marks", "KPI Weight / Marks", "KPI Weight", "Weight", "Weightage", "KPI %"),
             "task_responsibility": _get_value(row, "Task Responsibility", "Responsibility", "Task / Responsibility"),
             "measurement": _get_value(row, "Measurement / Guidance", "Measurement", "Measure", "Instructions", "Guidance"),
-            "target": _get_value(row, "Expected Target", "Target", "Target Value"),
+            "target": _get_value(row, "Target Value for 100 Marks", "Expected Target", "Target", "Target Value"),
+            "qualifying_value": _get_value(
+                row,
+                "Qualifying Value",
+                "Minimum Qualifying Value",
+                "Maximum Qualifying Value",
+                "Qualification Value",
+            ),
             "unit": _get_value(row, "Unit", "Measurement Unit"),
-            "frequency": _get_value(row, "Frequency", "Periodicity"),
-            "input_type": _get_value(row, "Result Entry Type", "Input Type", "Type"),
+            "frequency": _get_value(row, "Review Frequency", "Frequency", "Periodicity"),
+            "input_type": _get_value(row, "Measurement Type", "Result Entry Type", "Input Type", "Type"),
             "direction": _get_value(row, "Scoring Direction", "Direction"),
             "dropdown_results": _get_value(
                 row,
+                "Dropdown Results and Marks",
                 "Custom Dropdown Results",
                 "Dropdown Results",
                 "Custom Results",
@@ -281,6 +298,7 @@ def parse_template_rows(path: Path) -> list[dict[str, Any]]:
             ),
             "source": _get_value(row, "Source", "Data Source"),
             "weight_basis": _get_value(row, "Weight Basis", "Weightage Basis"),
+            "current_model": bool(normalized_headers.intersection(current_headers)),
             # Kept only for backward compatibility with older uploaded sheets.
             "evidence_required": _get_value(row, "Evidence Required", "Require Evidence"),
         })
