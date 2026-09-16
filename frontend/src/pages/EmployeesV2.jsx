@@ -473,18 +473,24 @@ export default function EmployeesV2() {
 
   async function importEmployees() {
     if (!importFile) {
-      setError('Choose an Excel or CSV file first.')
+      setError('Choose an Excel file first.')
+      return
+    }
+    const filename = importFile.name.toLowerCase()
+    if (!filename.endsWith('.xlsx') && !filename.endsWith('.xls')) {
+      setError('Only Excel files (.xlsx or .xls) can be imported.')
       return
     }
     setBusy(true)
     try {
+      setError('')
       const fd = new FormData()
       fd.append('file', importFile)
       fd.append('preview', 'false')
       // Do not set Content-Type manually: Axios adds the required multipart
       // boundary in the browser, while the shared API client adds the bearer token.
       const {data} = await apiPostForm('/employees/import-excel-v2', fd)
-      setMessage(`Imported ${data.created} employee(s); ${data.skipped} skipped.`)
+      setMessage(`Employee Directory updated from Excel: ${data.created} employee(s) created; ${data.skipped} existing employee(s) skipped.`)
       setImportOpen(false)
       setImportFile(null)
       loadUsers()
@@ -506,7 +512,7 @@ export default function EmployeesV2() {
               {canImportEmployees ? (
                 <button className="secondary" onClick={() => setImportOpen(true)}>
                   <FileUp size={16} />
-                  Import Excel/CSV
+                  Import Employee Excel
                 </button>
               ) : null}
               <button className="primary" onClick={openAdd}>
@@ -910,7 +916,7 @@ export default function EmployeesV2() {
 
       {importOpen ? (
         <Modal
-          title="Import Employees"
+          title="Import Employees from Excel"
           onClose={() => setImportOpen(false)}
           actions={
             <>
@@ -918,20 +924,20 @@ export default function EmployeesV2() {
                 Cancel
               </button>
               <button className="primary" disabled={busy} onClick={importEmployees}>
-                {busy ? 'Importing...' : 'Import file'}
+                {busy ? 'Importing Excel...' : 'Import Excel'}
               </button>
             </>
           }
         >
           <p className="muted small-copy">
-            Use the same headings as the Add Employee screen: Employee No / Unique ID, Full Name, Email, Temporary Password, System Role,
-            Department, Designation / Role and Reporting Manager Email.
+            Upload the Employee Excel workbook. Valid rows are automatically created in the Employee Directory using Employee No / Unique ID, Full Name, Email, Temporary Password, System Role, Department, Designation / Role, KPI Template and Reporting Manager Email.
           </p>
           <button type="button" className="secondary" onClick={downloadEmployeeSample} style={{marginBottom: '12px'}}>
             <Download size={16} />
             Download current Employee Excel format
           </button>
-          <input type="file" accept=".xlsx,.xls,.csv" onChange={e => setImportFile(e.target.files?.[0] || null)} />
+          <input type="file" accept=".xlsx,.xls" onChange={e => setImportFile(e.target.files?.[0] || null)} />
+          <div className="cell-help" style={{marginTop: '8px'}}>Excel only (.xlsx or .xls). After import, the Employee Directory refreshes automatically.</div>
         </Modal>
       ) : null}
     </>
