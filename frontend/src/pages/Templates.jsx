@@ -82,30 +82,43 @@ export default function Templates(){
     }
   }
 
+  function chooseExcel(file){
+    if (!file) {
+      setImportForm({...importForm, file: null})
+      return
+    }
+    const filename = file.name.toLowerCase()
+    if (!filename.endsWith('.xlsx') && !filename.endsWith('.xls')) {
+      setImportErrors(x => ({...x, file: 'Only Excel files (.xlsx or .xls) can be imported.'}))
+      setImportForm({...importForm, file: null})
+      return
+    }
+    const suggestedName = file.name.replace(/\.(xlsx|xls)$/i, '').replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim()
+    setImportForm(current => ({
+      ...current,
+      file,
+      name: current.name === 'Imported KPI Template' && suggestedName ? suggestedName : current.name
+    }))
+    setImportErrors(x => ({...x, file: ''}))
+  }
+
   async function importFile(){
     const errors = {}
-    if (!importForm.file) errors.file = 'Choose an Excel or CSV file.'
+    if (!importForm.file) errors.file = 'Choose an Excel file.'
     if (!importForm.name.trim()) errors.name = 'Template name is required.'
+    if (importForm.file) {
+      const filename = importForm.file.name.toLowerCase()
+      if (!filename.endsWith('.xlsx') && !filename.endsWith('.xls')) errors.file = 'Only Excel files (.xlsx or .xls) can be imported.'
+    }
     if (Object.keys(errors).length) { setImportErrors(errors); setError('Complete the required fields highlighted in red.'); return }
     try {
       setError(''); setMessage(''); setImportErrors({})
-      const ext = importForm.file.name.toLowerCase().split('.').pop()
-      let data
-      if (ext === 'csv') {
-        const csv_text = await importForm.file.text()
-        ;({data} = await api.post('/kpi/templates/import-csv', {
-          name: importForm.name,
-          designation_id: importForm.designation_id ? Number(importForm.designation_id) : null,
-          csv_text
-        }))
-      } else {
-        const fd = new FormData()
-        fd.append('file', importForm.file)
-        fd.append('name', importForm.name)
-        if (importForm.designation_id) fd.append('designation_id', importForm.designation_id)
-        ;({data} = await apiPostForm('/kpi/templates/import-excel', fd))
-      }
-      setMessage(`Imported ${data.kras.length} KRA(s) as a draft template. Review before publishing.`)
+      const fd = new FormData()
+      fd.append('file', importForm.file)
+      fd.append('name', importForm.name)
+      if (importForm.designation_id) fd.append('designation_id', importForm.designation_id)
+      const {data} = await apiPostForm('/kpi/templates/import-excel', fd)
+      setMessage(`KPI Template '${data.name || importForm.name}' created from Excel with ${data.kras.length} KRA(s). It is saved as a draft for review and publishing.`)
       setShowImport(false)
       setImportForm({name: 'Imported KPI Template', designation_id: '', file: null}); setImportErrors({})
       load()
@@ -136,7 +149,7 @@ export default function Templates(){
         subtitle="Department-first KPI hierarchy. Choose a department, then view or edit its KPI templates."
         actions={isAdmin ? (
           <>
-            <button className="secondary" onClick={() => setShowImport(v => !v)}><FileUp size={16}/>Import</button>
+            <button className="secondary" onClick={() => setShowImport(v => !v)}><FileUp size={16}/>Import KPI Excel</button>
             <Link className="primary" to="/templates/new"><Plus size={16}/>Create template</Link>
           </>
         ) : null}
@@ -163,22 +176,23 @@ export default function Templates(){
 
       {showImport ? (
         <Card className="import-card">
-          <h3>Import a KPI template</h3>
-          <p className="muted small-copy">Field names: KRA Name, KRA Weight / Marks, KPI Name, Task Responsibility, Result Entry Type, Weight / Marks, Expected Target, Unit, Scoring Direction, Frequency, Measurement / Guidance, Custom Dropdown Results, Source, Weight Basis.</p>
+          <h3>Import KPI Template from Excel</h3>
+          <p className="muted small-copy">Upload the current KPI Excel format. The workbook is converted directly into a draft KPI Template and shown in this KPI Templates directory. Current fields include KRA Name, KRA Weightage, KPI Name, Task Responsibility, Measurement Type, Unit, Scoring Direction, KPI Weightage, Target Value for 100 Marks, Qualifying Value, Review Frequency, Dropdown Results and Marks, Measurement / Guidance and Source.</p>
           <button type="button" className="secondary" onClick={downloadTemplateSample} style={{marginBottom: '12px'}}><Download size={16}/>Download current KPI Template Excel format</button>
           <div className="form-grid">
-            <label>Template name <span className="required-mark">*</span><input className={importErrors.name?'field-invalid':''} aria-invalid={Boolean(importErrors.name)} value={importForm.name} onChange={e => {setImportForm({...importForm, name: e.target.value});setImportErrors(x=>({...x,name:''}))}}/>{importErrors.name?<span className="field-error">{importErrors.name}</span>:null}</label>
+            <label>Template name <span className="required-mark">*</span><input className={importErrors.name?'field-invalid':''} aria-invalid={Boolean(importErrors.name)} value={importForm.name} onChange={e => {setImportForm({...importForm, name: e.target.value});setImportErrors(x=>({...x,name:''}))}}/>{importErrors.name?<span className="field-error">{importErrors.name}</span>:null}<span className="cell-help">When you choose the Excel file, the file name is used automatically unless you enter another template name.</span></label>
             <label>Designation
               <select value={importForm.designation_id} onChange={e => setImportForm({...importForm, designation_id: e.target.value})}>
                 <option value="">Any designation</option>
                 {designations.map(x => <option key={x.id} value={x.id}>{x.label}</option>)}
               </select>
+              <span className="cell-help">Optional. When selected, the imported template is created under that designation and its department.</span>
             </label>
-            <label>Excel / CSV file <span className="required-mark">*</span><input className={importErrors.file?'field-invalid':''} aria-invalid={Boolean(importErrors.file)} type="file" accept=".xlsx,.xls,.csv" onChange={e => {setImportForm({...importForm, file: e.target.files?.[0] || null});setImportErrors(x=>({...x,file:''}))}}/>{importErrors.file?<span className="field-error">{importErrors.file}</span>:null}</label>
+            <label>Excel file <span className="required-mark">*</span><input className={importErrors.file?'field-invalid':''} aria-invalid={Boolean(importErrors.file)} type="file" accept=".xlsx,.xls" onChange={e => chooseExcel(e.target.files?.[0] || null)}/>{importErrors.file?<span className="field-error">{importErrors.file}</span>:null}<span className="cell-help">Excel only (.xlsx or .xls). CSV is not available from this screen.</span></label>
           </div>
           <div className="footer-actions">
             <button className="secondary" onClick={() => setShowImport(false)}>Cancel</button>
-            <button className="primary" onClick={importFile}>Import template</button>
+            <button className="primary" onClick={importFile}>Import Excel & Create Template</button>
           </div>
         </Card>
       ) : null}
