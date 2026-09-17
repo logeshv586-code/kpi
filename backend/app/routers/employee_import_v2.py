@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
-from ..auth import hash_password, require_roles
+from ..auth import hash_password, require_roles, verify_password
 from ..database import get_db
 from ..file_storage import TEMPLATE_EXTENSIONS, read_table, save_upload
 from ..models import Department, Designation, Division, KpiTemplate, Role, TemplateStatus, User
@@ -127,7 +127,7 @@ async def _import_employees_excel_v2(
         general_division = Division(name="General")
         db.add(general_division)
         db.flush()
-    users = db.scalars(select(User)).all()
+    users = db.scalars(select(User).options(joinedload(User.manager))).all()
     existing_by_email = {u.email.strip().lower(): u for u in users if u.email}
     existing_by_employee_no = {
         str(u.employee_no).strip().lower(): u for u in users if u.employee_no
@@ -139,6 +139,7 @@ async def _import_employees_excel_v2(
         if _row_get(r, "Email", "Email ID")
     }
     workbook_employee_nos: set[str] = set()
+    workbook_emails: set[str] = set()
     prepared = []
 
     for index, row in enumerate(rows, 2):
@@ -194,14 +195,28 @@ async def _import_employees_excel_v2(
         if not role:
             errors.append("System Role must be employee, manager, HR, or superadmin")
 
-        employee_no_key = employee_no.lower()
+        employee_no_key = employee_no.lower() if employee_no else ""
+        existing_user = None
         if employee_no_key:
-            existing_employee = existing_by_employee_no.get(employee_no_key)
-            if existing_employee and existing_employee.email.strip().lower() != email:
-                errors.append(f"Employee No / Unique ID '{employee_no}' already belongs to {existing_employee.email}")
-            elif employee_no_key in workbook_employee_nos:
+            existing_user = existing_by_employee_no.get(employee_no_key)
+            if existing_user:
+                other_by_email = existing_by_email.get(email)
+                if other_by_email and other_by_email.id != existing_user.id:
+                    errors.append(f"Email '{email}' already belongs to another employee ({other_by_email.employee_no or other_by_email.name})")
+            if employee_no_key in workbook_employee_nos:
                 errors.append(f"Employee No / Unique ID '{employee_no}' is duplicated in this file")
             workbook_employee_nos.add(employee_no_key)
+
+        if not existing_user and email in existing_by_email:
+            existing_user = existing_by_email[email]
+            if employee_no_key:
+                other_by_emp = existing_by_employee_no.get(employee_no_key)
+                if other_by_emp and other_by_emp.id != existing_user.id:
+                    errors.append(f"Employee No / Unique ID '{employee_no}' already belongs to {other_by_emp.email}")
+
+        if email in workbook_emails:
+            errors.append(f"Email '{email}' is duplicated in this file")
+        workbook_emails.add(email)
 
         matching_departments = [
             d for d in departments if d.name.strip().lower() == department_name.lower()
@@ -253,7 +268,26 @@ async def _import_employees_excel_v2(
         if manager_email and manager_email not in existing_by_email and manager_email not in imported_emails:
             errors.append(f"Reporting Manager '{manager_email}' was not found")
 
-        status = "error" if errors else ("existing" if email in existing_by_email else "ready")
+        if errors:
+            status = "error"
+        elif existing_user:
+            email_changed = bool(email and existing_user.email.strip().lower() != email)
+            name_changed = bool(name and existing_user.name != name)
+            role_changed = bool(role and existing_user.role != role)
+            desig_changed = bool(designation and existing_user.designation_id != designation.id)
+            template_changed = bool(template_name and kpi_template and existing_user.kpi_template_id != kpi_template.id)
+            emp_changed = bool(employee_no and existing_user.employee_no != employee_no)
+            current_mgr_email = existing_user.manager.email.strip().lower() if existing_user.manager else ""
+            mgr_changed = bool(manager_email and current_mgr_email != manager_email)
+            raw_pwd = _row_get(row, "Temporary Password", "Password")
+            pwd_changed = bool(raw_pwd and str(raw_pwd).strip() and not verify_password(str(raw_pwd).strip(), existing_user.password_hash))
+            if email_changed or name_changed or role_changed or desig_changed or template_changed or emp_changed or mgr_changed or pwd_changed:
+                status = "update"
+            else:
+                status = "existing"
+        else:
+            status = "ready"
+
         prepared.append({
             "row": index,
             "employee_no": employee_no,
@@ -276,8 +310,9 @@ async def _import_employees_excel_v2(
             "preview": True,
             "file": {k: saved[k] for k in ("file_id", "filename", "url", "size")},
             "total_rows": len(prepared),
-            "valid_rows": sum(1 for r in prepared if r["status"] in {"ready", "existing"}),
+            "valid_rows": sum(1 for r in prepared if r["status"] in {"ready", "existing", "update"}),
             "created": sum(1 for r in prepared if r["status"] == "ready"),
+            "updated": sum(1 for r in prepared if r["status"] == "update"),
             "skipped": sum(1 for r in prepared if r["status"] == "existing"),
             "rows": [{k: v for k, v in r.items() if k != "password"} for r in prepared],
         }
@@ -287,18 +322,76 @@ async def _import_employees_excel_v2(
         raise HTTPException(400, f"Fix {len(invalid)} invalid employee row(s) before importing")
 
     created_users: dict[str, User] = {}
+    updated_users: dict[str, User] = {}
     skipped = 0
     for row in prepared:
-        if row["email"] in existing_by_email:
-            skipped += 1
-            existing_user = existing_by_email[row["email"]]
-            if not existing_user.employee_no and row["employee_no"]:
+        employee_no_key = row["employee_no"].lower() if row["employee_no"] else ""
+        existing_user = existing_by_employee_no.get(employee_no_key) if employee_no_key else None
+        if not existing_user and row["email"]:
+            existing_user = existing_by_email.get(row["email"])
+
+        if existing_user:
+            user_changed = False
+            # 0. Update Email
+            if row["email"] and existing_user.email.strip().lower() != row["email"]:
+                old_email = existing_user.email.strip().lower()
+                existing_user.email = row["email"]
+                if old_email in existing_by_email:
+                    del existing_by_email[old_email]
+                existing_by_email[row["email"]] = existing_user
+                user_changed = True
+
+            # 1. Update Name
+            if row["name"] and existing_user.name != row["name"]:
+                existing_user.name = row["name"]
+                user_changed = True
+
+            # 2. Update Employee No / Unique ID
+            if row["employee_no"] and existing_user.employee_no != row["employee_no"]:
                 existing_user.employee_no = row["employee_no"]
-            if not existing_user.designation_id and row["designation_id"]:
+                existing_by_employee_no[row["employee_no"].lower()] = existing_user
+                user_changed = True
+
+            # 3. Update Designation / Department
+            if row["designation_id"] and existing_user.designation_id != row["designation_id"]:
                 existing_user.designation_id = row["designation_id"]
-            if not existing_user.kpi_template_id and row["kpi_template_id"]:
+                user_changed = True
+
+            # 4. Update KPI Template if specified in Excel
+            if row["kpi_template"] and row["kpi_template_id"] and existing_user.kpi_template_id != row["kpi_template_id"]:
                 existing_user.kpi_template_id = row["kpi_template_id"]
+                user_changed = True
+
+            # 5. Update System Role
+            if row["role"]:
+                new_role = Role(row["role"])
+                if existing_user.role != new_role:
+                    if existing_user.role != Role.superadmin or actor.role == Role.superadmin:
+                        existing_user.role = new_role
+                        user_changed = True
+
+            # 6. Update Password (only if explicitly provided in file and different)
+            raw_pwd = _row_get(row, "Temporary Password", "Password")
+            if raw_pwd and str(raw_pwd).strip():
+                pwd_text = str(raw_pwd).strip()
+                if not verify_password(pwd_text, existing_user.password_hash):
+                    existing_user.password_hash = hash_password(pwd_text)
+                    user_changed = True
+
+            if user_changed:
+                updated_users[existing_user.email] = existing_user
+                audit(db, actor.id, "update_employee", "user", existing_user.id, {
+                    "email": existing_user.email,
+                    "employee_no": existing_user.employee_no,
+                    "name": existing_user.name,
+                    "designation_id": existing_user.designation_id,
+                    "kpi_template_id": existing_user.kpi_template_id,
+                    "role": existing_user.role.value,
+                })
+            else:
+                skipped += 1
             continue
+
         user = User(
             employee_no=row["employee_no"] or None,
             name=row["name"],
@@ -316,6 +409,7 @@ async def _import_employees_excel_v2(
             db.flush()
         created_users[user.email] = user
         existing_by_employee_no[user.employee_no.lower()] = user
+        existing_by_email[user.email.lower()] = user
         audit(db, actor.id, "import_employee", "user", user.id, {
             "email": user.email,
             "employee_no": user.employee_no,
@@ -325,11 +419,17 @@ async def _import_employees_excel_v2(
     all_by_email = {**existing_by_email, **created_users}
     for row in prepared:
         user = all_by_email.get(row["email"])
+        if not user and row["employee_no"]:
+            user = existing_by_employee_no.get(row["employee_no"].lower())
         if not user or not row["manager_email"]:
             continue
         manager = all_by_email.get(row["manager_email"])
-        if manager and manager.id != user.id:
+        if manager and manager.id != user.id and user.manager_id != manager.id:
             user.manager_id = manager.id
+            if user.email not in created_users and user.email not in updated_users:
+                updated_users[user.email] = user
+                if skipped > 0:
+                    skipped -= 1
 
     db.commit()
     return {
@@ -337,6 +437,7 @@ async def _import_employees_excel_v2(
         "total_rows": len(prepared),
         "valid_rows": len(prepared),
         "created": len(created_users),
+        "updated": len(updated_users),
         "skipped": skipped,
         "rows": [{k: v for k, v in r.items() if k != "password"} for r in prepared],
         "temporary_password_note": "Rows without Temporary Password use the system default temporary password.",

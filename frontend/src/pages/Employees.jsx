@@ -177,8 +177,12 @@ export default function Employees(){
     setBusy(true)
     try{
       const fd=new FormData();fd.append('file',importFile);fd.append('preview','false')
-      const {data}=await apiPostForm('/admin/import-employees-excel',fd)
-      setMessage(`Imported ${data.created} employee(s); ${data.skipped} existing row(s) skipped.`);setImportOpen(false);setImportFile(null);loadUsers()
+      const parts = []
+      if (data.created) parts.push(`${data.created} employee(s) created`)
+      if (data.updated) parts.push(`${data.updated} employee(s) updated`)
+      if (data.skipped) parts.push(`${data.skipped} existing employee(s) unchanged`)
+      const summary = parts.length ? parts.join(', ') : 'No changes'
+      setMessage(`Imported from Excel: ${summary}.`);setImportOpen(false);setImportFile(null);loadUsers()
     }catch(e){setError(getError(e))}finally{setBusy(false)}
   }
 

@@ -111,11 +111,11 @@ rdata = reimport_resp.json()
 assert rdata["created"] == 0
 assert rdata["skipped"] == 3
 
-# 6. Test CONFLICT: Same employee_no belonging to a different email must be blocked
+# 6. Test CONFLICT: Same employee_no claiming an email that already belongs to another user must be blocked
 wb_conflict = Workbook()
 ws_c = wb_conflict.active
 ws_c.append(["Employee No / Unique ID", "Full Name", "Email", "System Role", "Department", "Designation / Role"])
-ws_c.append(["EMP-1001", "Fake Sarah", "fake.sarah@company.com", "employee", "Operations", "Operations Specialist"])
+ws_c.append(["EMP-1001", "Fake Sarah", "david.miller@company.com", "employee", "Operations", "Operations Specialist"])
 buf_c = BytesIO()
 wb_conflict.save(buf_c)
 buf_c.seek(0)
@@ -126,7 +126,28 @@ conflict_resp = client.post(
     data={"preview": "false"},
     files={"file": ("conflict.xlsx", buf_c.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
 )
-assert conflict_resp.status_code == 400, "Conflicting employee ID must return 400"
+assert conflict_resp.status_code == 400, "Conflicting employee email must return 400"
+
+# 6b. Test SUCCESSFUL UPDATE: Updating email & name using unchanged Employee ID must succeed
+wb_update = Workbook()
+ws_u = wb_update.active
+ws_u.append(["Employee No / Unique ID", "Full Name", "Email", "System Role", "Department", "Designation / Role"])
+ws_u.append(["EMP-1001", "Sarah Updated", "sarah.new@company.com", "manager", "Operations", "Operations Manager"])
+buf_u = BytesIO()
+wb_update.save(buf_u)
+buf_u.seek(0)
+
+update_resp = client.post(
+    "/api/admin/import-employees-excel-v2",
+    headers=admin,
+    data={"preview": "false"},
+    files={"file": ("update.xlsx", buf_u.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+)
+assert update_resp.status_code == 200, update_resp.text
+assert update_resp.json()["updated"] == 1
+sarah_updated = next(u for u in client.get("/api/admin/users", headers=admin).json() if u["employee_no"] == "EMP-1001")
+assert sarah_updated["email"] == "sarah.new@company.com"
+assert sarah_updated["name"] == "Sarah Updated"
 
 # 7. Test DUPLICATE WITHIN FILE: Multiple rows with same employee_no must be blocked
 wb_dup = Workbook()

@@ -489,8 +489,12 @@ export default function EmployeesV2() {
       fd.append('preview', 'false')
       // Do not set Content-Type manually: Axios adds the required multipart
       // boundary in the browser, while the shared API client adds the bearer token.
-      const {data} = await apiPostForm('/employees/import-excel-v2', fd)
-      setMessage(`Employee Directory updated from Excel: ${data.created} employee(s) created; ${data.skipped} existing employee(s) skipped.`)
+      const parts = []
+      if (data.created) parts.push(`${data.created} employee(s) created`)
+      if (data.updated) parts.push(`${data.updated} employee(s) updated`)
+      if (data.skipped) parts.push(`${data.skipped} existing employee(s) unchanged`)
+      const summary = parts.length ? parts.join(', ') : 'No changes'
+      setMessage(`Employee Directory updated from Excel: ${summary}.`)
       setImportOpen(false)
       setImportFile(null)
       loadUsers()
