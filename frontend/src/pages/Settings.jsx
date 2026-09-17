@@ -151,7 +151,7 @@ export default function Settings(){
         <div className="section-heading">
           <div>
             <h3>Email Alert Configuration</h3>
-            <p className="muted small-copy">If someone changes the mailbox/app password outside this KPI system, this page will detect the SMTP login failure. Enter the new password here, test it, and mail alerts will resume after the connection succeeds.</p>
+            <p className="muted small-copy">If someone changes the mailbox/app password outside this Performance Management system, this page will detect the SMTP login failure. Enter the new password here, test it, and mail alerts will resume after the connection succeeds.</p>
           </div>
           <div className={healthOk?'status-badge success':healthBad?'status-badge danger':'status-badge'}>
             {healthOk?'Connected · Mail alerts active':healthBad?'Disconnected · Mail alerts not sending':'Checking connection'}

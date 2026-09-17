@@ -1,4 +1,4 @@
-# KPI System v1.2 — File Uploads, Dynamic Imports, Evidence & Customer UX
+# Performance Management System v1.2 — File Uploads, Dynamic Imports, Evidence & Customer UX
 
 ## Implemented backend
 

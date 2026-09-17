@@ -1,4 +1,4 @@
-"""End-to-end regression checks for KPI System v1.2 enhancement features.
+"""End-to-end regression checks for Performance Management System v1.2 enhancement features.
 
 Run from the project root:
     DATABASE_URL=sqlite:////tmp/kpi_v12_test.db PYTHONPATH=backend python backend/tests/run_enhancement_tests.py

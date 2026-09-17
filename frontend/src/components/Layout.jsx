@@ -55,10 +55,9 @@ export default function Layout({children}) {
       {mobileMenuOpen && <div className="mobile-overlay" onClick={() => setMobileMenuOpen(false)} />}
       <aside className={`sidebar ${mobileMenuOpen ? 'open' : ''}`}>
         <div className="brand">
-          <div className="brand-mark">K</div>
           <div>
-            <strong>KPI System</strong>
-            <span>Performance Management</span>
+            <strong>Performance Management System</strong>
+           
           </div>
         </div>
         <div className="nav-section">

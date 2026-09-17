@@ -109,7 +109,7 @@ def reset_full_system_data(db: Session, current_user_id: int | None = None, clea
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Reset KPI System database data")
+    parser = argparse.ArgumentParser(description="Reset Performance Management System database data")
     parser.add_argument("--confirm", required=True, help="Must be RESET to confirm")
     parser.add_argument("--mode", choices=["full", "transactional"], default="full", help="Reset mode (default: full)")
     args = parser.parse_args()

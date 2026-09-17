@@ -1,11 +1,11 @@
-import {useState, useEffect} from 'react'
-import {Eye, EyeOff, RotateCw, ShieldCheck} from 'lucide-react'
-import {useNavigate} from 'react-router-dom'
-import {api} from '../lib/api'
-import {useAuth} from '../lib/auth'
-import {ErrorBox} from '../components/UI'
+import { useState, useEffect } from 'react'
+import { Eye, EyeOff, RotateCw, ShieldCheck } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { api } from '../lib/api'
+import { useAuth } from '../lib/auth'
+import { ErrorBox } from '../components/UI'
 
-export default function Login(){
+export default function Login() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [captchaId, setCaptchaId] = useState('')
@@ -16,7 +16,7 @@ export default function Login(){
   const [loading, setLoading] = useState(false)
   const [show, setShow] = useState(false)
   const [forgot, setForgot] = useState(false)
-  const {login} = useAuth(), nav = useNavigate()
+  const { login } = useAuth(), nav = useNavigate()
 
   const fetchCaptcha = async () => {
     setCaptchaLoading(true)
@@ -73,8 +73,8 @@ export default function Login(){
         <div className="brand login-brand">
           <div className="brand-mark">K</div>
           <div>
-            <strong>KPI System</strong>
-            <span>Performance Management</span>
+            <strong>Performance Management System</strong>
+
           </div>
         </div>
         <h1>Welcome back</h1>
