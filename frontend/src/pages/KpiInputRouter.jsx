@@ -135,7 +135,13 @@ function ReviewerWorkspace({initialList,onListChange}){
   }
   async function downloadPdf(){if(!id)return;try{const response=await api.get(`/kpi/assignments/${id}/pdf`,{responseType:'blob'}),blob=new Blob([response.data],{type:'application/pdf'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`kpi_report_${(assignment?.employee||'employee').toLowerCase().replace(/[^a-z0-9]+/g,'_')}.pdf`;a.click();URL.revokeObjectURL(url)}catch(e){setError(getError(e))}}
 
-  if(!assignment)return<Loader/>
+  if(!assignment){
+    if(error)return <>
+      <PageHeader title={canReview?'KPI Manager Review':'KPI Hierarchy View'}/>
+      <ErrorBox error={error}/>
+    </>
+    return <Loader/>
+  }
   return <>
     <PageHeader title={canReview?'KPI Manager Review':'KPI Hierarchy View'} subtitle={canReview?'Review the actual business result in its configured unit. The same target, direction and qualifying rule converts the manager result into marks out of 100.':'You can view KPI results for all levels below you. Manager input remains editable only by the immediate reporting person.'} actions={<button className="secondary" onClick={downloadPdf}><Download size={16}/>Export PDF Report</button>}/>
     <ErrorBox error={error}/>{message?<div className="success-box" style={{marginBottom:'12px'}}>{message}</div>:null}
@@ -178,7 +184,9 @@ export default function KpiInputRouter(){
   const reviewerUser=['manager','superadmin','hr'].includes(user?.role)||Boolean(user?.is_reporting_manager)
   useEffect(()=>{api.get('/kpi/my').then(({data})=>setList(data)).catch(e=>setError(getError(e)))},[])
   useEffect(()=>{
-    if(!list?.length||id)return
+    if(!list?.length)return
+    const idValid=id&&list.some(row=>String(row.id)===String(id))
+    if(idValid)return
     const selfRows=list.filter(row=>String(row.employee_id)===String(user?.id))
     let candidates=selfRows
     if(!candidates.length){
@@ -186,14 +194,15 @@ export default function KpiInputRouter(){
       const firstEmployeeId=sorted[0]?.employee_id
       candidates=sorted.filter(row=>String(row.employee_id)===String(firstEmployeeId))
     }
-    const preferred=chooseDefaultReviewPeriod(candidates)
+    const preferred=chooseDefaultReviewPeriod(candidates)||candidates[0]||list[0]
     if(preferred)setParams({assignment:preferred.id},{replace:true})
   },[list,id,user?.id,setParams])
   if(error)return<ErrorBox error={error}/>
   if(!list)return<Loader/>
+  if(!list.length)return<KpiInputV2/>
   if(!reviewerUser)return<KpiInputV2/>
   if(!id)return<Loader/>
-  const current=list.find(row=>String(row.id)===String(id))
+  const current=list.find(row=>String(row.id)===String(id))||list[0]
   if(current&&String(current.employee_id)===String(user?.id))return<KpiInputV2/>
   return<ReviewerWorkspace initialList={list} onListChange={setList}/>
 }
