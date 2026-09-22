@@ -399,6 +399,12 @@ def update_user(user_id: int, payload: UserUpdate, db: Session = Depends(get_db)
         raise HTTPException(404, "Manager not found")
     if data.get("designation_id") and not db.get(Designation, data["designation_id"]):
         raise HTTPException(404, "Designation not found")
+    # If the PATCH payload contains kpi_template_id=null but the employee already
+    # has a template, treat it as "no change" rather than an explicit clear.
+    # This prevents incidental edits (name, manager, etc.) from wiping the
+    # previously assigned template when the frontend sends a null default.
+    if "kpi_template_id" in data and data["kpi_template_id"] is None and user.kpi_template_id is not None:
+        data.pop("kpi_template_id")
     template = None if effective_role == Role.superadmin else (_validate_employee_template(db, data.get("kpi_template_id")) if "kpi_template_id" in data else user.kpi_template)
     for key, value in data.items():
         setattr(user, key, value)
