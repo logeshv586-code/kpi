@@ -26,6 +26,14 @@ async def upload_file(file: UploadFile, _=Depends(get_current_user)):
     return await save_upload(file)
 
 
+@router.post("/upload-multiple")
+async def upload_multiple_files(files: list[UploadFile], _=Depends(get_current_user)):
+    results = []
+    for file in files:
+        results.append(await save_upload(file))
+    return results
+
+
 @router.get("/{file_id}")
 def get_file(file_id: str):
     # This route is intentionally link-friendly so evidence opens in a new tab.

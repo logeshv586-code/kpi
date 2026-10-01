@@ -27,7 +27,16 @@ from ..models import (
     User,
 )
 from ..schemas import ResponseIn, ReviewIn, ReopenIn
-from ..services import audit, calculate_achievement_percent, calculate_item_score, threshold_status
+from ..services import (
+    audit,
+    calculate_achievement_percent,
+    calculate_item_score,
+    threshold_status,
+    item_config,
+    _uses_kra_average_100,
+    MEASUREMENT_TARGET_METHOD,
+)
+from ..file_storage import upload_metadata, upload_metadatas, parse_file_ids
 from . import kpi_router, kpi_submit_override
 
 
@@ -329,21 +338,26 @@ def relationship_get_assignment(
     for kra in data["kras"]:
         for item in kra["items"]:
             response = response_map.get(item["id"])
-            item["response"] = None if not response else {
-                "actual_numeric": response.actual_numeric,
-                "answer_text": response.answer_text,
-                "selected_option": response.selected_option,
-                "manager_actual_numeric": response.manager_actual_numeric,
-                "manager_selected_option": response.manager_selected_option,
-                "measurement": response.measurement,
-                "remarks": response.remarks,
-                "evidence_url": response.evidence_url,
-                "evidence_file_id": response.evidence_file_id,
-                "evidence_file": kpi_router.upload_metadata(response.evidence_file_id),
-                "score": response.score,
-                "manager_score": response.manager_score,
-                "achievement_pct": calculate_achievement_percent(response.item, response),
-            }
+            if not response:
+                item["response"] = None
+            else:
+                files = upload_metadatas(response.evidence_file_id)
+                item["response"] = {
+                    "actual_numeric": response.actual_numeric,
+                    "answer_text": response.answer_text,
+                    "selected_option": response.selected_option,
+                    "manager_actual_numeric": response.manager_actual_numeric,
+                    "manager_selected_option": response.manager_selected_option,
+                    "measurement": response.measurement,
+                    "remarks": response.remarks,
+                    "evidence_url": response.evidence_url,
+                    "evidence_file_id": response.evidence_file_id,
+                    "evidence_file": files[0] if files else None,
+                    "evidence_files": files,
+                    "score": response.score,
+                    "manager_score": response.manager_score,
+                    "achievement_pct": calculate_achievement_percent(response.item, response),
+                }
 
     reviews = db.scalars(
         select(KpiReview)
@@ -425,9 +439,11 @@ def relationship_save_responses(
     elif assignment.status in {AssignmentStatus.submitted, AssignmentStatus.manager_reviewed, AssignmentStatus.finalized}:
         raise HTTPException(409, "KPI entry has already been submitted and is locked for employee editing.")
 
-    valid_ids = set(
-        db.scalars(select(KpiItem.id).join(Kra).where(Kra.template_id == assignment.template_id)).all()
-    )
+    valid_items = {
+        item.id: item
+        for item in db.scalars(select(KpiItem).join(Kra).where(Kra.template_id == assignment.template_id)).all()
+    }
+    valid_ids = set(valid_items.keys())
     response_map = {r.kpi_item_id: r for r in assignment.responses}
 
     for row in payload:
@@ -440,20 +456,58 @@ def relationship_save_responses(
             db.flush()
             response_map[row.kpi_item_id] = response
 
+        kpi_item = valid_items[row.kpi_item_id]
         values = row.model_dump()
+
+        # Determine target ceiling for numeric inputs when direction is not lower
+        max_limit = None
+        if kpi_item.direction != "lower":
+            t_val = float(kpi_item.target_value or 0)
+            if _uses_kra_average_100(kpi_item) and item_config(kpi_item)["meta"].get("scoring_method") != MEASUREMENT_TARGET_METHOD:
+                max_limit = 100.0
+            elif t_val > 0:
+                max_limit = t_val
+            elif kpi_item.input_type == "percentage":
+                max_limit = 100.0
+
+        # Handle multiple evidence files
+        file_ids = values.get("evidence_file_ids")
+        if file_ids and isinstance(file_ids, list):
+            valid_file_ids = parse_file_ids(file_ids)
+            resolved_evidence_id = ",".join(valid_file_ids) if valid_file_ids else None
+        elif values.get("evidence_file_id"):
+            valid_file_ids = parse_file_ids(values.get("evidence_file_id"))
+            resolved_evidence_id = ",".join(valid_file_ids) if valid_file_ids else None
+        else:
+            resolved_evidence_id = None
+
         if review_mode:
             # Reviewers can change only the Manager Score answer. Employee
             # answers, notes and evidence remain exactly as submitted.
-            response.manager_actual_numeric = values.get("manager_actual_numeric")
+            mgr_val = values.get("manager_actual_numeric")
+            if mgr_val is not None:
+                mgr_num = max(0.0, float(mgr_val))
+                if max_limit is not None and mgr_num > max_limit:
+                    mgr_num = max_limit
+                response.manager_actual_numeric = mgr_num
+            else:
+                response.manager_actual_numeric = None
             response.manager_selected_option = values.get("manager_selected_option")
         else:
-            response.actual_numeric = values.get("actual_numeric")
+            act_val = values.get("actual_numeric")
+            if act_val is not None:
+                act_num = max(0.0, float(act_val))
+                if max_limit is not None and act_num > max_limit:
+                    act_num = max_limit
+                response.actual_numeric = act_num
+            else:
+                response.actual_numeric = None
             response.answer_text = values.get("answer_text")
             response.selected_option = values.get("selected_option")
             response.measurement = values.get("measurement")
             response.remarks = values.get("remarks")
             response.evidence_url = values.get("evidence_url")
-            response.evidence_file_id = values.get("evidence_file_id")
+            response.evidence_file_id = resolved_evidence_id
 
     if assignment.status == AssignmentStatus.not_started:
         assignment.status = AssignmentStatus.draft

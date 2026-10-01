@@ -22,8 +22,23 @@ SAMPLE_DIR = Path(os.getenv("KPI_SAMPLE_DIR", str(BASE_DIR / "samples"))).resolv
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 SAMPLE_DIR.mkdir(parents=True, exist_ok=True)
 
-MAX_FILE_SIZE = int(os.getenv("KPI_MAX_UPLOAD_BYTES", str(10 * 1024 * 1024)))
-UPLOAD_EXTENSIONS = {".pdf", ".xlsx", ".xls", ".csv"}
+MAX_FILE_SIZE = int(os.getenv("KPI_MAX_UPLOAD_BYTES", str(100 * 1024 * 1024)))
+UPLOAD_EXTENSIONS = {
+    ".pdf",
+    ".xlsx",
+    ".xls",
+    ".csv",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".webp",
+    ".bmp",
+    ".svg",
+    ".doc",
+    ".docx",
+    ".txt",
+}
 TEMPLATE_EXTENSIONS = {".xlsx", ".xls", ".csv"}
 
 CONTENT_TYPES = {
@@ -31,7 +46,31 @@ CONTENT_TYPES = {
     ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     ".xls": "application/vnd.ms-excel",
     ".csv": "text/csv",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".bmp": "image/bmp",
+    ".svg": "image/svg+xml",
+    ".doc": "application/msword",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".txt": "text/plain",
 }
+
+
+def parse_file_ids(value: Any) -> list[str]:
+    if not value:
+        return []
+    if isinstance(value, (list, tuple, set)):
+        result: list[str] = []
+        for item in value:
+            result.extend(parse_file_ids(item))
+        return [fid for fid in result if fid]
+    raw = str(value).strip()
+    if not raw:
+        return []
+    return re.findall(r"[0-9a-fA-F]{32}", raw)
 
 
 def safe_original_name(name: str | None) -> str:
@@ -93,19 +132,37 @@ def find_upload(file_id: str) -> Path | None:
 def upload_metadata(file_id: str | None) -> dict[str, Any] | None:
     if not file_id:
         return None
-    path = find_upload(file_id)
+    ids = parse_file_ids(file_id)
+    if not ids:
+        return None
+    primary_id = ids[0]
+    path = find_upload(primary_id)
     if not path or not path.exists():
         return None
-    prefix = f"{file_id}_"
+    prefix = f"{primary_id}_"
     filename = path.name[len(prefix):] if path.name.startswith(prefix) else path.name
     ext = path.suffix.lower()
     return {
-        "file_id": file_id,
+        "file_id": primary_id,
         "filename": filename,
-        "url": f"/api/files/{file_id}",
+        "url": f"/api/files/{primary_id}",
         "content_type": CONTENT_TYPES.get(ext, "application/octet-stream"),
         "size": path.stat().st_size,
     }
+
+
+def upload_metadatas(file_ids_val: Any) -> list[dict[str, Any]]:
+    ids = parse_file_ids(file_ids_val)
+    metas: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for fid in ids:
+        if fid in seen:
+            continue
+        seen.add(fid)
+        m = upload_metadata(fid)
+        if m:
+            metas.append(m)
+    return metas
 
 
 def clear_uploads() -> int:

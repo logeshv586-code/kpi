@@ -166,7 +166,7 @@ class KpiResponse(Base):
     measurement: Mapped[str | None] = mapped_column(Text, nullable=True)
     remarks: Mapped[str | None] = mapped_column(Text, nullable=True)
     evidence_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
-    evidence_file_id: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
+    evidence_file_id: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
     score: Mapped[float] = mapped_column(Float, default=0)
     manager_score: Mapped[float] = mapped_column(Float, default=0)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

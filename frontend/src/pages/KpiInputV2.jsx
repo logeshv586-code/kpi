@@ -31,7 +31,48 @@ function AnswerInput({item,value,onChange,disabled,prefix=''}){
   }
   const current=v[`${prefix}actual_numeric`]
   const directScore=isKraAverage100(item)&&!isMeasurementTarget(item)
-  return <input disabled={disabled} type="number" min="0" max={directScore?100:undefined} step="1" value={current==null?'':Math.round(Number(current))} onChange={e=>{if(e.target.value===''){onChange({[`${prefix}actual_numeric`]:null});return}const next=Math.max(0,Math.round(Number(e.target.value)));onChange({[`${prefix}actual_numeric`]:directScore?Math.min(100,next):next})}} placeholder={isMeasurementTarget(item)?`Enter achieved ${metricUnit(item)}`:directScore?'0 - 100':'Enter achieved value'}/>
+
+  let maxLimit = undefined
+  if(directScore){
+    maxLimit = 100
+  }else if(item?.direction !== 'lower'){
+    const tVal = targetValue(item)
+    if(tVal > 0){
+      maxLimit = tVal
+    }
+  }
+
+  const handleChange = e => {
+    if(e.target.value===''){
+      onChange({[`${prefix}actual_numeric`]:null})
+      return
+    }
+    let next = Math.max(0, Math.round(Number(e.target.value)))
+    if(maxLimit !== undefined){
+      next = Math.min(maxLimit, next)
+    }
+    onChange({[`${prefix}actual_numeric`]: next})
+  }
+
+  const placeholder = maxLimit !== undefined
+    ? `0 - ${maxLimit}${isMeasurementTarget(item)?` ${metricUnit(item)}`:''}`
+    : isMeasurementTarget(item)
+      ? `Enter achieved ${metricUnit(item)}`
+      : 'Enter achieved value'
+
+  return <div className="input-with-limit">
+    <input
+      disabled={disabled}
+      type="number"
+      min="0"
+      max={maxLimit}
+      step="1"
+      value={current==null?'':Math.round(Number(current))}
+      onChange={handleChange}
+      placeholder={placeholder}
+    />
+    {maxLimit !== undefined ? <span className="max-limit-tag">Max: {maxLimit}{isMeasurementTarget(item)?` ${metricUnit(item)}`:''}</span> : null}
+  </div>
 }
 
 function CalculatedValue({item,value,prefix=''}){
@@ -56,7 +97,7 @@ function CalculatedValue({item,value,prefix=''}){
 function MeasurementRule({item}){
   if(!isMeasurementTarget(item))return <>{isKraAverage100(item)?<><strong>Direct score /100</strong><div className="cell-help">Minimum {minimumScore(item)}</div></>:<span>Legacy scoring</span>}</>
   const qualifier=qualifyingValue(item),unit=metricUnit(item),direction=item.direction==='lower'?'Lower is better':'Higher is better'
-  return <div className="kpi-threshold-summary"><div><strong>{measurementLabels[item.input_type]||'Number'}</strong> · {unit}</div><div>Target: <strong>{formatMetric(targetValue(item),item)}</strong> = 100 marks</div><div className="cell-help">{direction}</div>{qualifier>0?<div className="cell-help">{item.direction==='lower'?'Maximum':'Minimum'} qualifying: {formatMetric(qualifier,item)}</div>:<div className="cell-help">No qualification gate</div>}</div>
+  return <div className="kpi-threshold-summary"><div><strong>{measurementLabels[item.input_type]||'Number'}</strong> · {unit}</div><div>Target: <strong>{formatMetric(targetValue(item),item)}</strong> = 100 marks</div><div className="cell-help">{direction}</div>{qualifier>0?<div className="cell-help">{item.direction==='lower'?'Maximum':'Minimum'} qualifying: {formatMetric(qualifier,item)}</div>:null}</div>
 }
 
 export default function KpiInputV2(){
@@ -89,7 +130,16 @@ export default function KpiInputV2(){
       const{data}=await api.get(`/kpi/assignments/${id}`)
       setAssignment(data)
       const next={}
-      data.template.kras.forEach(kra=>kra.items.forEach(item=>{next[item.id]={kpi_item_id:item.id,...(item.response||{})}}))
+      data.template.kras.forEach(kra=>kra.items.forEach(item=>{
+        const resp = item.response || {}
+        const files = resp.evidence_files || (resp.evidence_file ? [resp.evidence_file] : [])
+        next[item.id]={
+          kpi_item_id:item.id,
+          ...resp,
+          evidence_files: files,
+          evidence_file: files[0] || null,
+        }
+      }))
       setValues(next)
     }catch(e){setError(getError(e))}
   }
@@ -136,7 +186,26 @@ export default function KpiInputV2(){
   const ready=allItems.length>0&&missing.length===0
 
   function setValue(itemId,patch){setValues(current=>({...current,[itemId]:{...current[itemId],...patch,kpi_item_id:itemId}}));setError('');setMessage('')}
-  function payload(){return allItems.map(item=>({kpi_item_id:item.id,actual_numeric:values[item.id]?.actual_numeric??null,answer_text:values[item.id]?.answer_text??null,selected_option:values[item.id]?.selected_option??null,manager_actual_numeric:values[item.id]?.manager_actual_numeric??null,manager_selected_option:values[item.id]?.manager_selected_option??null,measurement:values[item.id]?.remarks??values[item.id]?.measurement??null,remarks:values[item.id]?.remarks??null,evidence_url:values[item.id]?.evidence_url??null,evidence_file_id:values[item.id]?.evidence_file_id??null}))}
+  function payload(){
+    return allItems.map(item=>{
+      const v = values[item.id] || {}
+      const files = v.evidence_files || (v.evidence_file ? [v.evidence_file] : [])
+      const fileIds = files.map(f=>f.file_id).filter(Boolean)
+      return {
+        kpi_item_id:item.id,
+        actual_numeric:v.actual_numeric??null,
+        answer_text:v.answer_text??null,
+        selected_option:v.selected_option??null,
+        manager_actual_numeric:v.manager_actual_numeric??null,
+        manager_selected_option:v.manager_selected_option??null,
+        measurement:v.remarks??v.measurement??null,
+        remarks:v.remarks??null,
+        evidence_url:v.evidence_url??null,
+        evidence_file_id:fileIds.join(',')||v.evidence_file_id||null,
+        evidence_file_ids:fileIds,
+      }
+    })
+  }
 
   async function save(){if(!id||busy)return false;setBusy(true);setError('');setMessage('');try{const{data}=await api.put(`/kpi/assignments/${id}/responses`,payload());setMessage(`Draft saved. Final score: ${scoreText(data.score)}/100`);await loadAssignment();loadList();return true}catch(e){setError(getError(e));return false}finally{setBusy(false)}}
   async function submit(){if(!ready){setError(`Complete all KPI inputs before submitting. ${missing.length} KPI${missing.length===1?' is':'s are'} still missing.`);return}setBusy(true);setError('');setMessage('');try{const saved=await api.put(`/kpi/assignments/${id}/responses`,payload());const{data}=await api.post(`/kpi/assignments/${id}/submit`);setMessage(`Submitted successfully. Final score: ${scoreText(data.score??saved.data.score??liveScore)}/100.`);await loadAssignment();loadList()}catch(e){setError(getError(e))}finally{setBusy(false)}}
@@ -178,17 +247,17 @@ export default function KpiInputV2(){
         const staffKra=kraScore(kra,values),managerKra=kraScore(kra,values,'manager_')
         return <Card key={kra.id}>
           <div className="kra-title"><div><h3>{kra.name}</h3><p>{kra.items.length} KPI{kra.items.length===1?'':'s'} · each KPI carries 100 marks</p></div><div className="kra-score-summary"><div className="weight-chip">KRA weight {whole(kra.weight)} / 100</div><div>Average KPI marks: <strong>{scoreText(staffAverage)}</strong> · KRA score: <strong>{scoreText(staffKra)}</strong></div>{isManagerMode?<div className="cell-help">Manager average {scoreText(managerAverage)} · KRA score {scoreText(managerKra)}</div>:null}</div></div>
-          <div className="table-wrap"><table className="kpi-input-table"><thead><tr><th>KPI parameter & task</th><th>Measurement / target</th><th>Qualifying value</th><th>Your achieved value</th><th>Calculated marks</th><th>Manager achieved</th><th>Manager marks</th><th>Optional description & PDF</th></tr></thead><tbody>{kra.items.map(item=>{
+          <div className="table-wrap"><table className="kpi-input-table"><thead><tr><th>KPI parameter & task</th><th>Measurement / target</th><th>Qualifying value</th><th>Your achieved value</th><th>Calculated marks</th><th>Manager achieved</th><th>Manager marks</th><th>Optional description & evidence</th></tr></thead><tbody>{kra.items.map(item=>{
             const v=values[item.id]||{},meta=item.config?.meta||{},qualifier=qualifyingValue(item)
             return <tr key={item.id}>
               <td><strong>{item.question}</strong>{meta.task_responsibility?<div className="cell-help">{meta.task_responsibility}</div>:null}{meta.measurement?<div className="cell-help">{meta.measurement}</div>:null}</td>
               <td><MeasurementRule item={item}/></td>
-              <td>{isMeasurementTarget(item)?<><strong>{qualifier>0?formatMetric(qualifier,item):'0 — no gate'}</strong>{qualifier>0?<div className="cell-help">{item.direction==='lower'?'Must be at or below':'Must be at or above'}</div>:null}</>:isKraAverage100(item)?<strong>{minimumScore(item)}</strong>:<span>Legacy</span>}</td>
+              <td>{isMeasurementTarget(item)?<><strong>{qualifier>0?formatMetric(qualifier,item):'—'}</strong>{qualifier>0?<div className="cell-help">{item.direction==='lower'?'Must be at or below':'Must be at or above'}</div>:null}</>:isKraAverage100(item)?<strong>{minimumScore(item)}</strong>:<span>Legacy</span>}</td>
               <td><AnswerInput disabled={locked} item={item} value={v} onChange={patch=>setValue(item.id,patch)}/>{isMeasurementTarget(item)&&v.actual_numeric!==null&&v.actual_numeric!==undefined?<div className="cell-help">{formatMetric(v.actual_numeric,item)}</div>:null}</td>
               <td><CalculatedValue item={item} value={v}/></td>
               <td><AnswerInput disabled={managerLocked||!isManagerMode} item={item} value={v} prefix="manager_" onChange={patch=>setValue(item.id,patch)}/>{isMeasurementTarget(item)&&v.manager_actual_numeric!==null&&v.manager_actual_numeric!==undefined?<div className="cell-help">{formatMetric(v.manager_actual_numeric,item)}</div>:null}</td>
               <td><CalculatedValue item={item} value={v} prefix="manager_"/></td>
-              <td><div className="stack-tight"><input disabled={locked} value={v.remarks||''} onChange={e=>setValue(item.id,{remarks:e.target.value})} placeholder="Optional description / notes"/><FileUpload compact disabled={locked} accept=".pdf" help="Optional PDF · max 10 MB" label="Optional PDF evidence" value={v.evidence_file||null} onUploaded={file=>setValue(item.id,{evidence_file_id:file?.file_id||null,evidence_file:file||null})}/>{v.evidence_file?<a className="evidence-link" href={apiFileUrl(v.evidence_file)} target="_blank" rel="noreferrer"><ExternalLink size={12}/>Open {v.evidence_file.filename}</a>:null}</div></td>
+              <td><div className="stack-tight"><input disabled={locked} value={v.remarks||''} onChange={e=>setValue(item.id,{remarks:e.target.value})} placeholder="Optional description / notes"/><FileUpload compact multiple disabled={locked} accept=".pdf,.xlsx,.xls,.csv,.png,.jpg,.jpeg,.webp,.gif,.bmp,.svg,.doc,.docx,.txt,image/*" help="Optional evidence · PDF, Excel, CSV, Images or Docs" label="Optional evidence files" value={v.evidence_files?.length ? v.evidence_files : (v.evidence_file ? [v.evidence_file] : [])} onUploaded={files=>{const arr = Array.isArray(files) ? files : (files ? [files] : []);setValue(item.id,{evidence_files:arr,evidence_file:arr[0]||null,evidence_file_id:arr.map(f=>f.file_id).join(',')})}}/></div></td>
             </tr>
           })}</tbody></table></div>
         </Card>

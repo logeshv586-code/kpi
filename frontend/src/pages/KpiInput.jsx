@@ -43,7 +43,18 @@ function Input({item,value,onChange,disabled}){
   const r=value||{},cfg=item.config||{},map=cfg.score_map||{}
   if(['choice','yesno'].includes(item.input_type)) return <select disabled={disabled} value={r.selected_option||''} onChange={e=>onChange({...r,selected_option:e.target.value})}><option value="">Select an answer...</option>{Object.keys(map).map(o=><option key={o} value={o}>{o} ({map[o]}%)</option>)}</select>
   if(item.input_type==='rating') return <input disabled={disabled} type="number" min="1" max={cfg.max_rating||5} step="1" value={r.actual_numeric==null?'':Math.round(Number(r.actual_numeric))} onChange={e=>onChange({...r,actual_numeric:e.target.value===''?null:Math.round(Number(e.target.value))})}/>
-  return <input disabled={disabled} type="number" step="1" value={r.actual_numeric==null?'':Math.round(Number(r.actual_numeric))} onChange={e=>onChange({...r,actual_numeric:e.target.value===''?null:Math.round(Number(e.target.value))})} placeholder={item.target_value!=null?`Enter achievement (target ${item.target_value})`:'Enter actual achievement'}/>
+  const target = item.target_value != null ? Number(item.target_value) : null
+  const maxLimit = item.direction !== 'lower' && target && target > 0 ? target : (item.input_type === 'percentage' ? 100 : undefined)
+  const handleChange = e => {
+    if (e.target.value === '') { onChange({...r, actual_numeric: null}); return }
+    let next = Math.max(0, Math.round(Number(e.target.value)))
+    if (maxLimit !== undefined) next = Math.min(maxLimit, next)
+    onChange({...r, actual_numeric: next})
+  }
+  return <div className="input-with-limit">
+    <input disabled={disabled} type="number" min="0" max={maxLimit} step="1" value={r.actual_numeric==null?'':Math.round(Number(r.actual_numeric))} onChange={handleChange} placeholder={maxLimit !== undefined ? `0 - ${maxLimit}` : (item.target_value!=null?`Enter achievement (target ${item.target_value})`:'Enter actual achievement')}/>
+    {maxLimit !== undefined ? <span className="max-limit-tag">Max: {maxLimit}</span> : null}
+  </div>
 }
 
 export default function KpiInput(){
@@ -214,7 +225,6 @@ export default function KpiInput(){
 
   async function submit(){
     if(answered!==allItems.length){setError(`Complete every KPI parameter before submitting (${answered}/${allItems.length} answered).`);return}
-    if(missingEvidence.length){setError(`Attach evidence for ${missingEvidence.length} required KPI parameter(s) before submission.`);return}
     const ok=await save()
     if(!ok)return
     try{
@@ -527,8 +537,7 @@ export default function KpiInput(){
                           <td>
                             <div className="stack-tight" style={{display:'flex',flexDirection:'column',gap:'6px'}}>
                               <input disabled={locked} value={v.remarks||''} onChange={e=>setValue(item.id,{remarks:e.target.value})} placeholder="Write actual measurement notes or details completed..." style={{fontSize:'0.85rem'}}/>
-                              <FileUpload compact disabled={locked} accept=".pdf" help="PDF only · maximum 10 MB" label="Upload PDF evidence" value={v.evidence_file||null} onUploaded={file=>setValue(item.id,{evidence_file_id:file?.file_id||null,evidence_file:file||null})}/>
-                              {v.evidence_file?<a className="evidence-link" href={apiFileUrl(v.evidence_file)} target="_blank" rel="noreferrer"><ExternalLink size={12}/>Open {v.evidence_file.filename}</a>:null}
+                              <FileUpload compact multiple disabled={locked} accept=".pdf,.xlsx,.xls,.csv,.png,.jpg,.jpeg,.webp,.gif,.bmp,.svg,.doc,.docx,.txt,image/*" help="Optional evidence · PDF, Excel, CSV, Images or Docs" label="Optional evidence files" value={v.evidence_files?.length ? v.evidence_files : (v.evidence_file ? [v.evidence_file] : [])} onUploaded={files=>{const arr = Array.isArray(files) ? files : (files ? [files] : []);setValue(item.id,{evidence_files:arr,evidence_file:arr[0]||null,evidence_file_id:arr.map(f=>f.file_id).join(',')})}}/>
                             </div>
                           </td>
                         </tr>

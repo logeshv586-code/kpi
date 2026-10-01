@@ -9,9 +9,15 @@ def ensure_schema_upgrades():
         columns = {c["name"] for c in inspector.get_columns("kpi_responses")}
         if "evidence_file_id" not in columns:
             with engine.begin() as conn:
-                conn.execute(text("ALTER TABLE kpi_responses ADD COLUMN evidence_file_id VARCHAR(80)"))
+                conn.execute(text("ALTER TABLE kpi_responses ADD COLUMN evidence_file_id TEXT"))
             inspector = inspect(engine)
             columns.add("evidence_file_id")
+        else:
+            try:
+                with engine.begin() as conn:
+                    conn.execute(text("ALTER TABLE kpi_responses ALTER COLUMN evidence_file_id TYPE TEXT"))
+            except Exception:
+                pass
         if "measurement" not in columns:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE kpi_responses ADD COLUMN measurement TEXT"))

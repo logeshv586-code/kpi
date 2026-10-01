@@ -53,7 +53,7 @@ export function qualificationStatus(item,value,prefix=''){
   if(raw===null||raw===undefined||raw==='')return{configured:qualifier>0,passed:null,qualifier,direction}
   const actual=Number(raw)
   if(!Number.isFinite(actual))return{configured:qualifier>0,passed:false,qualifier,direction,actual}
-  if(qualifier<=0)return{configured:false,passed:true,qualifier,direction,actual,reason:'No qualification gate'}
+  if(qualifier<=0)return{configured:false,passed:true,qualifier,direction,actual,reason:''}
   const passed=direction==='lower'?actual<=qualifier:actual>=qualifier
   const reason=passed?'Qualification achieved':direction==='lower'?`Must be ${qualifier} or lower`:`Must be ${qualifier} or higher`
   return{configured:true,passed,qualifier,direction,actual,reason}

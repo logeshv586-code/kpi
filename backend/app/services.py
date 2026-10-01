@@ -231,7 +231,7 @@ def threshold_status(item: KpiItem, actual: float | None) -> dict[str, Any]:
         value = float(actual)
         if qualifier <= 0:
             passed = True
-            reason = "No qualification gate"
+            reason = ""
         elif direction == "lower":
             passed = value <= qualifier
             reason = "Qualification achieved" if passed else f"Must be {qualifier:g} or lower"

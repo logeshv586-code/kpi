@@ -152,6 +152,7 @@ class ResponseIn(BaseModel):
     remarks: str | None = None
     evidence_url: str | None = None
     evidence_file_id: str | None = None
+    evidence_file_ids: list[str] | None = None
 
 
 class ResetIn(BaseModel):

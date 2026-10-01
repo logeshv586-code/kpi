@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session, joinedload
 from ..auth import get_current_user, has_tab_permission, require_roles, require_tab_permission
 from ..database import get_db, settings
 from ..mail import send_email
-from ..file_storage import TEMPLATE_EXTENSIONS, parse_response_rows, parse_template_rows, save_upload, upload_metadata
+from ..file_storage import TEMPLATE_EXTENSIONS, parse_response_rows, parse_template_rows, save_upload, upload_metadata, upload_metadatas
 from ..importing import create_template_from_import_rows, match_response_rows
 from ..models import (
     AssignmentStatus,
@@ -937,6 +937,7 @@ def get_assignment(assignment_id: int, db: Session = Depends(get_db), user: User
                 "evidence_url": r.evidence_url,
                 "evidence_file_id": r.evidence_file_id,
                 "evidence_file": upload_metadata(r.evidence_file_id),
+                "evidence_files": upload_metadatas(r.evidence_file_id),
                 "score": r.score,
                 "manager_score": r.manager_score,
                 "achievement_pct": calculate_achievement_percent(r.item, r),

@@ -1,7 +1,7 @@
 import {useEffect,useMemo,useState} from 'react'
-import {Download,RotateCcw,Save,Send} from 'lucide-react'
+import {Download,ExternalLink,RotateCcw,Save,Send} from 'lucide-react'
 import {useSearchParams} from 'react-router-dom'
-import {api,getError} from '../lib/api'
+import {api,apiFileUrl,getError} from '../lib/api'
 import {useAuth} from '../lib/auth'
 import {Card,ErrorBox,Loader,PageHeader,Status} from '../components/UI'
 import {assignmentDepartment,compareText} from '../lib/sorting'
@@ -16,7 +16,50 @@ function ManagerInput({item,value,onChange,disabled}){
   const v=value||{},cfg=item.config||{}
   if(isChoice(item))return <select disabled={disabled} value={v.manager_selected_option||''} onChange={e=>onChange({manager_selected_option:e.target.value})}><option value="">Select manager result...</option>{Object.keys(cfg.score_map||{}).map(option=><option key={option} value={option}>{option}</option>)}</select>
   const directScore=isKraAverage100(item)&&!isMeasurementTarget(item)
-  return <input disabled={disabled} type="number" min="0" max={directScore?100:undefined} step="1" value={v.manager_actual_numeric==null?'':Math.round(Number(v.manager_actual_numeric))} onChange={e=>{if(e.target.value===''){onChange({manager_actual_numeric:null});return}const next=Math.max(0,Math.round(Number(e.target.value)));onChange({manager_actual_numeric:directScore?Math.min(100,next):next})}} placeholder={isMeasurementTarget(item)?`Enter ${metricUnit(item)}`:directScore?'0 - 100':'Enter achieved result'}/>
+
+  let maxLimit = undefined
+  if(directScore){
+    maxLimit = 100
+  }else if(item?.direction !== 'lower'){
+    const tVal = targetValue(item)
+    if(tVal > 0){
+      maxLimit = tVal
+    }
+  }
+
+  const handleChange = e => {
+    if(e.target.value===''){
+      onChange({manager_actual_numeric:null})
+      return
+    }
+    let next = Math.max(0, Math.round(Number(e.target.value)))
+    if(maxLimit !== undefined){
+      next = Math.min(maxLimit, next)
+    }
+    onChange({manager_actual_numeric: next})
+  }
+
+  const placeholder = maxLimit !== undefined
+    ? `0 - ${maxLimit}${isMeasurementTarget(item)?` ${metricUnit(item)}`:''}`
+    : isMeasurementTarget(item)
+      ? `Enter ${metricUnit(item)}`
+      : directScore
+        ? '0 - 100'
+        : 'Enter achieved result'
+
+  return <div className="input-with-limit">
+    <input
+      disabled={disabled}
+      type="number"
+      min="0"
+      max={maxLimit}
+      step="1"
+      value={v.manager_actual_numeric==null?'':Math.round(Number(v.manager_actual_numeric))}
+      onChange={handleChange}
+      placeholder={placeholder}
+    />
+    {maxLimit !== undefined ? <span className="max-limit-tag">Max: {maxLimit}{isMeasurementTarget(item)?` ${metricUnit(item)}`:''}</span> : null}
+  </div>
 }
 
 function employeeAnswer(item,value){
@@ -54,8 +97,7 @@ function RuleSummary({item}){
   return <div className="kpi-threshold-summary">
     <div><strong>{measurementLabels[item.input_type]||'Number'}</strong> · {unit}</div>
     <div>Target: <strong>{formatMetric(targetValue(item),item)}</strong> = 100 marks</div>
-    <div className="cell-help">{item.direction==='lower'?'Lower result is better':'Higher result is better'}</div>
-    {qualifier>0?<div className="cell-help">{item.direction==='lower'?'Maximum':'Minimum'} qualifying: {formatMetric(qualifier,item)}</div>:<div className="cell-help">No qualification gate</div>}
+    {qualifier>0?<div className="cell-help">{item.direction==='lower'?'Maximum':'Minimum'} qualifying: {formatMetric(qualifier,item)}</div>:null}
   </div>
 }
 
@@ -72,7 +114,22 @@ function ReviewerWorkspace({initialList,onListChange}){
   async function loadAssignment(){
     if(!id)return
     setAssignment(null);setValues({})
-    try{const{data}=await api.get(`/kpi/assignments/${id}`);setAssignment(data);const next={};data.template.kras.forEach(kra=>kra.items.forEach(item=>{next[item.id]={kpi_item_id:item.id,...(item.response||{})}}));setValues(next)}catch(e){setError(getError(e))}
+    try{
+      const{data}=await api.get(`/kpi/assignments/${id}`)
+      setAssignment(data)
+      const next={}
+      data.template.kras.forEach(kra=>kra.items.forEach(item=>{
+        const resp = item.response || {}
+        const files = resp.evidence_files || (resp.evidence_file ? [resp.evidence_file] : [])
+        next[item.id]={
+          kpi_item_id:item.id,
+          ...resp,
+          evidence_files: files,
+          evidence_file: files[0] || null,
+        }
+      }))
+      setValues(next)
+    }catch(e){setError(getError(e))}
   }
   useEffect(()=>{loadAssignment()},[id])
 
@@ -110,7 +167,26 @@ function ReviewerWorkspace({initialList,onListChange}){
   const cap=assignment?.subordinate_score_cap,pendingSubordinates=Number(assignment?.subordinate_pending_count||0)
 
   function setManagerValue(itemId,patch){setValues(currentValues=>({...currentValues,[itemId]:{...currentValues[itemId],...patch,kpi_item_id:itemId}}));setError('');setMessage('')}
-  function payload(){return items.map(item=>({kpi_item_id:item.id,actual_numeric:values[item.id]?.actual_numeric??null,answer_text:values[item.id]?.answer_text??null,selected_option:values[item.id]?.selected_option??null,manager_actual_numeric:values[item.id]?.manager_actual_numeric??null,manager_selected_option:values[item.id]?.manager_selected_option??null,measurement:values[item.id]?.measurement??null,remarks:values[item.id]?.remarks??null,evidence_url:values[item.id]?.evidence_url??null,evidence_file_id:values[item.id]?.evidence_file_id??null}))}
+  function payload(){
+    return items.map(item=>{
+      const v = values[item.id] || {}
+      const files = v.evidence_files || (v.evidence_file ? [v.evidence_file] : [])
+      const fileIds = files.map(f=>f.file_id).filter(Boolean)
+      return {
+        kpi_item_id:item.id,
+        actual_numeric:v.actual_numeric??null,
+        answer_text:v.answer_text??null,
+        selected_option:v.selected_option??null,
+        manager_actual_numeric:v.manager_actual_numeric??null,
+        manager_selected_option:v.manager_selected_option??null,
+        measurement:v.measurement??null,
+        remarks:v.remarks??null,
+        evidence_url:v.evidence_url??null,
+        evidence_file_id:fileIds.join(',')||v.evidence_file_id||null,
+        evidence_file_ids:fileIds,
+      }
+    })
+  }
 
   async function saveManagerScore(){if(!id||!canEdit||busy)return;setBusy(true);setError('');try{await api.put(`/kpi/assignments/${id}/responses`,payload());setMessage(`Manager Score saved: ${scoreText(liveManagerScore)}/100.`);await loadAssignment();await refreshList()}catch(e){setError(getError(e))}finally{setBusy(false)}}
   async function submitManagerReview(){
@@ -160,17 +236,36 @@ function ReviewerWorkspace({initialList,onListChange}){
 
     {assignment.template.kras.map(kra=>{
       const staffAverage=kraAverage(kra,values),managerAverage=kraAverage(kra,values,'manager_',false),staffKra=kraScore(kra,values),managerKra=kraScore(kra,values,'manager_',false)
-      return <Card key={kra.id}><div className="kra-review-head"><div><strong>{kra.name}</strong><div className="muted">{kra.items.length} KPI{kra.items.length===1?'':'s'} · each carries 100 marks</div></div><div className="kra-score-summary"><div className="weight-chip">KRA weight {whole(kra.weight)} / 100</div><div>Staff avg {scoreText(staffAverage)} → {scoreText(staffKra)}</div><div>Manager avg {scoreText(managerAverage)} → {scoreText(managerKra)}</div></div></div><div className="table-wrap"><table className="kpi-input-table"><thead><tr><th>KPI parameter & task</th><th>Measurement / target</th><th>Qualifying value</th><th>Staff achieved</th><th>Staff marks</th><th>Manager achieved</th><th>Manager marks</th><th>Employee notes</th></tr></thead><tbody>{kra.items.map(item=>{
+      return <Card key={kra.id}><div className="kra-review-head"><div><strong>{kra.name}</strong><div className="muted">{kra.items.length} KPI{kra.items.length===1?'':'s'} · each carries 100 marks</div></div><div className="kra-score-summary"><div className="weight-chip">KRA weight {whole(kra.weight)} / 100</div><div>Staff avg {scoreText(staffAverage)} → {scoreText(staffKra)}</div><div>Manager avg {scoreText(managerAverage)} → {scoreText(managerKra)}</div></div></div><div className="table-wrap"><table className="kpi-input-table"><thead><tr><th>KPI parameter & task</th><th>Measurement / target</th><th>Qualifying value</th><th>Staff achieved</th><th>Staff marks</th><th>Manager achieved</th><th>Manager marks</th><th>Employee notes & evidence</th></tr></thead><tbody>{kra.items.map(item=>{
         const v=values[item.id]||{},qualifier=qualifyingValue(item)
+        const evFiles = v.evidence_files || (v.evidence_file ? [v.evidence_file] : [])
         return <tr key={item.id}>
           <td><strong>{item.question}</strong><div className="cell-help">{item.config?.meta?.task_responsibility||''}</div></td>
           <td><RuleSummary item={item}/></td>
-          <td>{isMeasurementTarget(item)?<><strong>{qualifier>0?formatMetric(qualifier,item):'0 — no gate'}</strong>{qualifier>0?<div className="cell-help">{item.direction==='lower'?'At or below':'At or above'}</div>:null}</>:isKraAverage100(item)?<strong>{minimumScore(item)}</strong>:<span>Legacy</span>}</td>
+          <td>{isMeasurementTarget(item)?<><strong>{qualifier>0?formatMetric(qualifier,item):'—'}</strong>{qualifier>0?<div className="cell-help">{item.direction==='lower'?'At or below':'At or above'}</div>:null}</>:isKraAverage100(item)?<strong>{minimumScore(item)}</strong>:<span>Legacy</span>}</td>
           <td><strong>{employeeAnswer(item,v)}</strong></td>
           <td><Calculated item={item} value={v}/></td>
           <td><ManagerInput disabled={!canEdit||busy} item={item} value={v} onChange={patch=>setManagerValue(item.id,patch)}/>{isMeasurementTarget(item)&&v.manager_actual_numeric!==null&&v.manager_actual_numeric!==undefined?<div className="cell-help">{formatMetric(v.manager_actual_numeric,item)}</div>:null}</td>
           <td><Calculated item={item} value={v} prefix="manager_"/></td>
-          <td>{v.remarks||v.measurement||'—'}</td>
+          <td>
+            <div>{v.remarks||v.measurement||'—'}</div>
+            {evFiles.length>0?(
+              <div style={{marginTop:'6px',display:'flex',flexDirection:'column',gap:'4px'}}>
+                {evFiles.map((f,fi)=>(
+                  <a key={fi} className="evidence-link" href={apiFileUrl(f)} target="_blank" rel="noreferrer" title={f.filename}>
+                    <ExternalLink size={12}/>{f.filename}
+                  </a>
+                ))}
+              </div>
+            ):null}
+            {v.evidence_url?(
+              <div style={{marginTop:'4px'}}>
+                <a className="evidence-link" href={v.evidence_url} target="_blank" rel="noreferrer">
+                  <ExternalLink size={12}/>Open evidence link
+                </a>
+              </div>
+            ):null}
+          </td>
         </tr>
       })}</tbody></table></div></Card>
     })}
