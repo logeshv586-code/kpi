@@ -107,6 +107,7 @@ async def save_upload(upload: UploadFile, allowed: set[str] | None = None) -> di
     stored_name = f"{file_id}_{original}"
     target = UPLOAD_DIR / stored_name
     size = 0
+    chunks = []
     try:
         with target.open("wb") as out:
             while chunk := await upload.read(1024 * 1024):
@@ -116,17 +117,69 @@ async def save_upload(upload: UploadFile, allowed: set[str] | None = None) -> di
                     target.unlink(missing_ok=True)
                     raise HTTPException(413, f"File is larger than the {MAX_FILE_SIZE // (1024*1024)} MB limit")
                 out.write(chunk)
+                chunks.append(chunk)
     finally:
         await upload.close()
+
+    content_type = upload.content_type or CONTENT_TYPES.get(ext, "application/octet-stream")
+    file_bytes = b"".join(chunks)
+
+    # Persist in shared PostgreSQL DB so both local and server have it immediately
+    _save_to_db(file_id, original, content_type, size, file_bytes)
+
     return {
         "file_id": file_id,
         "filename": original,
         "stored_name": stored_name,
         "path": str(target),
         "url": f"/api/files/{file_id}",
-        "content_type": upload.content_type or CONTENT_TYPES.get(ext, "application/octet-stream"),
+        "content_type": content_type,
         "size": size,
     }
+
+
+def _save_to_db(file_id: str, filename: str, content_type: str, size: int, data: bytes) -> None:
+    try:
+        from .database import SessionLocal
+        from .models import UploadedFileRecord
+        with SessionLocal() as db:
+            record = db.query(UploadedFileRecord).filter_by(file_id=file_id).first()
+            if not record:
+                record = UploadedFileRecord(
+                    file_id=file_id,
+                    filename=filename,
+                    content_type=content_type,
+                    size=size,
+                    data=data,
+                )
+                db.add(record)
+            else:
+                record.filename = filename
+                record.content_type = content_type
+                record.size = size
+                record.data = data
+            db.commit()
+    except Exception:
+        pass
+
+
+def _fetch_from_db(file_id: str) -> dict[str, Any] | None:
+    try:
+        from .database import SessionLocal
+        from .models import UploadedFileRecord
+        with SessionLocal() as db:
+            record = db.query(UploadedFileRecord).filter_by(file_id=file_id).first()
+            if record:
+                return {
+                    "file_id": record.file_id,
+                    "filename": record.filename,
+                    "content_type": record.content_type,
+                    "size": record.size,
+                    "data": bytes(record.data),
+                }
+    except Exception:
+        pass
+    return None
 
 
 def _fetch_from_remote(file_id: str) -> Path | None:
@@ -173,6 +226,18 @@ def find_upload(file_id: str) -> Path | None:
         path = matches[0].resolve()
         if path.exists():
             return path
+
+    # Check shared PostgreSQL DB first
+    db_rec = _fetch_from_db(file_id)
+    if db_rec:
+        clean_filename = safe_original_name(db_rec["filename"])
+        target = UPLOAD_DIR / f"{file_id}_{clean_filename}"
+        try:
+            target.write_bytes(db_rec["data"])
+            return target
+        except Exception:
+            pass
+
     return _fetch_from_remote(file_id)
 
 
@@ -195,11 +260,22 @@ def upload_metadata(file_id: str | None) -> dict[str, Any] | None:
             "content_type": CONTENT_TYPES.get(ext, "application/octet-stream"),
             "size": path.stat().st_size,
         }
+
+    db_rec = _fetch_from_db(primary_id)
+    if db_rec:
+        return {
+            "file_id": primary_id,
+            "filename": db_rec["filename"],
+            "url": f"/api/files/{primary_id}",
+            "content_type": db_rec["content_type"],
+            "size": db_rec["size"],
+        }
+
     return {
         "file_id": primary_id,
-        "filename": f"Evidence_{primary_id[:8]}.pdf",
+        "filename": f"Evidence_{primary_id[:8]}",
         "url": f"/api/files/{primary_id}",
-        "content_type": "application/pdf",
+        "content_type": "application/octet-stream",
         "size": 0,
     }
 

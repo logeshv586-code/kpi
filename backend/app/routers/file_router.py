@@ -35,15 +35,29 @@ async def upload_multiple_files(files: list[UploadFile], _=Depends(get_current_u
 
 
 @router.get("/{file_id}")
-def get_file(file_id: str, download: bool = False):
+def get_file(file_id: str, download: bool = False, db: Session = Depends(get_db)):
     # This route is intentionally link-friendly so evidence opens in a new tab.
     # Deployments that require private evidence can swap this for signed URLs/auth.
     path = find_upload(file_id)
-    if not path:
-        raise HTTPException(404, "File not found")
-    meta = upload_metadata(file_id)
-    disposition = "attachment" if download else "inline"
-    return FileResponse(path, filename=meta["filename"], media_type=meta["content_type"], content_disposition_type=disposition)
+    if path and path.exists():
+        meta = upload_metadata(file_id)
+        disposition = "attachment" if download else "inline"
+        return FileResponse(path, filename=meta["filename"], media_type=meta["content_type"], content_disposition_type=disposition)
+
+    # Direct fallback from shared PostgreSQL database
+    from ..models import UploadedFileRecord
+    from fastapi.responses import Response
+    import urllib.parse
+    record = db.query(UploadedFileRecord).filter_by(file_id=file_id).first()
+    if record:
+        disposition = "attachment" if download else "inline"
+        safe_fname = urllib.parse.quote(record.filename)
+        headers = {
+            "Content-Disposition": f"{disposition}; filename*=utf-8''{safe_fname}"
+        }
+        return Response(content=bytes(record.data), media_type=record.content_type, headers=headers)
+
+    raise HTTPException(404, "File not found")
 
 
 @router.post("/parse-kpi-excel")
