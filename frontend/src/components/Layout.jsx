@@ -55,9 +55,10 @@ export default function Layout({children}) {
       {mobileMenuOpen && <div className="mobile-overlay" onClick={() => setMobileMenuOpen(false)} />}
       <aside className={`sidebar ${mobileMenuOpen ? 'open' : ''}`}>
         <div className="brand">
+          <div className="brand-mark">F</div>
           <div>
-            <strong>Performance Management System</strong>
-           
+            <strong>Flipkart KPI</strong>
+            <span>Performance Management</span>
           </div>
         </div>
         <div className="nav-section">
@@ -97,10 +98,10 @@ export default function Layout({children}) {
             <button className="hamburger" onClick={() => setMobileMenuOpen(!mobileMenuOpen)}>
               <Menu size={20}/>
             </button>
-            <div className="crumb">KPI Performance Management</div>
+            <div className="crumb">Flipkart KPI Performance Management</div>
           </div>
           <div className="top-context">
-            <span>{user?.department || 'Eagle Software'}</span>
+            <span>{user?.department || 'Flipkart'}</span>
             <div className="avatar small">{user?.name?.slice(0, 1)}</div>
           </div>
         </header>
