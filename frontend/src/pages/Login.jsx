@@ -71,10 +71,10 @@ export default function Login() {
     <div className="login-page">
       <div className="login-card">
         <div className="brand login-brand">
-          <div className="brand-mark">K</div>
+          <div className="brand-mark">F</div>
           <div>
-            <strong>Performance Management System</strong>
-
+            <strong>Flipkart KPI</strong>
+            <span>Performance Management</span>
           </div>
         </div>
         <h1>Welcome back</h1>
@@ -121,7 +121,7 @@ export default function Login() {
           <div className="captcha-section">
             <div className="captcha-header">
               <span className="captcha-label">
-                <ShieldCheck size={14} color="#2563eb" /> Security Verification
+                <ShieldCheck size={14} /> Security Verification
               </span>
               <span className="captcha-subtext">Case-insensitive</span>
             </div>
@@ -165,8 +165,8 @@ export default function Login() {
       </div>
       <div className="login-art">
         <div>
-          <h2>Measure what matters.</h2>
-          <p>Targets, achievement, evidence, approvals and history in one simple workflow.</p>
+          <h2>Goals that move <span className="flipkart-highlight">together.</span></h2>
+          <p>Targets, achievement, evidence, approvals and KPI history in one consistent Flipkart-styled workspace.</p>
         </div>
       </div>
     </div>
