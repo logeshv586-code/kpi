@@ -1,5 +1,5 @@
 import {useEffect, useMemo, useState} from 'react'
-import {ArrowDown, ArrowUp, ArrowUpDown, Download, FileUp, KeyRound, Pencil, ShieldAlert, Trash2, UserPlus} from 'lucide-react'
+import {ArrowDown, ArrowUp, ArrowUpDown, Download, FileUp, KeyRound, Pencil, Search, ShieldAlert, Trash2, UserPlus, X} from 'lucide-react'
 import {Link, useNavigate} from 'react-router-dom'
 import {api, downloadApiFile, getError, apiPostForm} from '../lib/api'
 import {canAccessTab, useAuth} from '../lib/auth'
@@ -49,6 +49,7 @@ export default function EmployeesV2() {
   const [busy, setBusy] = useState(false)
   const [autoEmail, setAutoEmail] = useState(true)
   const [sort, setSort] = useState({key: 'department', direction: 'asc'})
+  const [search, setSearch] = useState('')
 
   // Custom system roles stored in localStorage
   const [customRoles, setCustomRoles] = useState(() => {
@@ -107,15 +108,32 @@ export default function EmployeesV2() {
   const designations = selectedDepartment ? (selectedDepartment.designations || []) : masters.flatMap(p => p.departments.flatMap(d => d.designations || []))
   const assignableTemplates = useMemo(() => templates.filter(t => t.status === 'active' && t.validation?.publishable), [templates])
 
-  const sortedUsers = useMemo(() => {
+  const filteredUsers = useMemo(() => {
     if (!users) return []
+    const q = search.trim().toLowerCase()
+    if (!q) return users
+    return users.filter(u => {
+      const empNo = text(u.employee_no || u.employee_id || `EMP-${String(u.id).padStart(4, '0')}`)
+      const name = text(u.name)
+      const email = text(u.email)
+      const role = text(u.role)
+      const dept = text(u.department)
+      const desig = text(u.designation)
+      const mgr = text(u.manager)
+      const tpl = text(u.kpi_template)
+      return empNo.includes(q) || name.includes(q) || email.includes(q) || role.includes(q) || dept.includes(q) || desig.includes(q) || mgr.includes(q) || tpl.includes(q)
+    })
+  }, [users, search])
+
+  const sortedUsers = useMemo(() => {
+    if (!filteredUsers) return []
     const mult = sort.direction === 'asc' ? 1 : -1
-    return [...users].sort((a, b) => {
+    return [...filteredUsers].sort((a, b) => {
       const val = u => sort.key === 'employee_no' ? (u.employee_no || u.employee_id || `EMP-${String(u.id).padStart(4, '0')}`) : u[sort.key]
       const c = text(val(a)).localeCompare(text(val(b)), undefined, {numeric: true, sensitivity: 'base'})
       return c ? c * mult : text(a.name).localeCompare(text(b.name)) * mult
     })
-  }, [users, sort])
+  }, [filteredUsers, sort])
 
   function toggleSort(key) {
     setSort(s => s.key === key ? {key, direction: s.direction === 'asc' ? 'desc' : 'asc'} : {key, direction: 'asc'})
@@ -538,6 +556,31 @@ export default function EmployeesV2() {
         <Loader />
       ) : (
         <Card>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:'12px',marginBottom:'14px',flexWrap:'wrap'}}>
+            <div style={{position:'relative',minWidth:'280px',maxWidth:'450px',flex:1}}>
+              <Search size={16} style={{position:'absolute',left:'12px',top:'50%',transform:'translateY(-50%)',color:'#94a3b8',pointerEvents:'none'}}/>
+              <input
+                type="text"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="Search by name, employee ID, email, role, department..."
+                style={{paddingLeft:'36px',paddingRight:search?'32px':'12px',width:'100%',borderRadius:'8px'}}
+              />
+              {search ? (
+                <button
+                  type="button"
+                  onClick={() => setSearch('')}
+                  style={{position:'absolute',right:'8px',top:'50%',transform:'translateY(-50%)',background:'none',border:'none',color:'#94a3b8',cursor:'pointer',padding:'4px'}}
+                  title="Clear search"
+                >
+                  <X size={14}/>
+                </button>
+              ) : null}
+            </div>
+            <div className="cell-help" style={{margin:0}}>
+              Showing <strong>{sortedUsers.length}</strong> of <strong>{users.length}</strong> employee{users.length === 1 ? '' : 's'}
+            </div>
+          </div>
           <div className="table-wrap">
             <table>
               <thead>
@@ -568,7 +611,13 @@ export default function EmployeesV2() {
                 </tr>
               </thead>
               <tbody>
-                {sortedUsers.map(u => (
+                {sortedUsers.length === 0 ? (
+                  <tr>
+                    <td colSpan={columns.length + (isAdmin ? 1 : 0)} className="empty" style={{textAlign:'center',padding:'24px'}}>
+                      No employees found matching "{search}".
+                    </td>
+                  </tr>
+                ) : sortedUsers.map(u => (
                   <tr key={u.id}>
                     <td>
                       <strong>{u.employee_no || u.employee_id || `EMP-${String(u.id).padStart(4, '0')}`}</strong>

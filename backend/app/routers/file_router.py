@@ -35,14 +35,15 @@ async def upload_multiple_files(files: list[UploadFile], _=Depends(get_current_u
 
 
 @router.get("/{file_id}")
-def get_file(file_id: str):
+def get_file(file_id: str, download: bool = False):
     # This route is intentionally link-friendly so evidence opens in a new tab.
     # Deployments that require private evidence can swap this for signed URLs/auth.
     path = find_upload(file_id)
     if not path:
         raise HTTPException(404, "File not found")
     meta = upload_metadata(file_id)
-    return FileResponse(path, filename=meta["filename"], media_type=meta["content_type"], content_disposition_type="inline")
+    disposition = "attachment" if download else "inline"
+    return FileResponse(path, filename=meta["filename"], media_type=meta["content_type"], content_disposition_type=disposition)
 
 
 @router.post("/parse-kpi-excel")

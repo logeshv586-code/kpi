@@ -145,6 +145,7 @@ class KpiAssignment(Base):
     final_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     finalized_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    manager_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
     cycle = relationship("KpiCycle", back_populates="assignments")
     user = relationship("User")
     template = relationship("KpiTemplate")

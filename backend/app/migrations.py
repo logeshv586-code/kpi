@@ -64,3 +64,8 @@ def ensure_schema_upgrades():
         if "access_permissions" not in columns:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE users ADD COLUMN access_permissions JSON"))
+    if "kpi_assignments" in tables:
+        columns = {c["name"] for c in inspector.get_columns("kpi_assignments")}
+        if "manager_comment" not in columns:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE kpi_assignments ADD COLUMN manager_comment TEXT"))

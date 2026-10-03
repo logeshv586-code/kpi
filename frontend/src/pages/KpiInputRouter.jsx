@@ -1,7 +1,7 @@
-import {useEffect,useMemo,useState} from 'react'
-import {Download,ExternalLink,RotateCcw,Save,Send} from 'lucide-react'
+import {useEffect,useMemo,useRef,useState} from 'react'
+import {Download,ExternalLink,Eye,File,FileSpreadsheet,FileText,Image as ImageIcon,MessageSquare,Paperclip,RotateCcw,Save,Send} from 'lucide-react'
 import {useSearchParams} from 'react-router-dom'
-import {api,apiFileUrl,getError} from '../lib/api'
+import {api,apiFileDownloadUrl,apiFileUrl,getError} from '../lib/api'
 import {useAuth} from '../lib/auth'
 import {Card,ErrorBox,Loader,PageHeader,Status} from '../components/UI'
 import {assignmentDepartment,compareText} from '../lib/sorting'
@@ -62,6 +62,14 @@ function ManagerInput({item,value,onChange,disabled}){
   </div>
 }
 
+function getFileIcon(filename){
+  const name=String(filename||'').toLowerCase()
+  if(/\.(png|jpe?g|webp|gif|bmp|svg)$/.test(name))return <ImageIcon size={14} style={{color:'#0284c7',flexShrink:0}}/>
+  if(/\.(xlsx|xls|csv)$/.test(name))return <FileSpreadsheet size={14} style={{color:'#16a34a',flexShrink:0}}/>
+  if(/\.pdf$/.test(name))return <FileText size={14} style={{color:'#dc2626',flexShrink:0}}/>
+  return <File size={14} style={{color:'#64748b',flexShrink:0}}/>
+}
+
 function employeeAnswer(item,value){
   if(!value)return'—'
   if(isChoice(item))return value.selected_option||'—'
@@ -108,6 +116,15 @@ function ReviewerWorkspace({initialList,onListChange}){
   const[params,setParams]=useSearchParams(),id=params.get('assignment')
   const[list,setList]=useState(initialList||[]),[assignment,setAssignment]=useState(null),[values,setValues]=useState({})
   const[error,setError]=useState(''),[message,setMessage]=useState(''),[busy,setBusy]=useState(false)
+  const[managerComment,setManagerComment]=useState('')
+  const textareaRef=useRef(null)
+
+  useEffect(()=>{
+    if(textareaRef.current){
+      textareaRef.current.style.height='auto'
+      textareaRef.current.style.height=`${Math.max(84,textareaRef.current.scrollHeight)}px`
+    }
+  },[managerComment])
 
   useEffect(()=>setList(initialList||[]),[initialList])
   async function refreshList(){try{const{data}=await api.get('/kpi/my');setList(data);onListChange?.(data)}catch(e){setError(getError(e))}}
@@ -117,6 +134,7 @@ function ReviewerWorkspace({initialList,onListChange}){
     try{
       const{data}=await api.get(`/kpi/assignments/${id}`)
       setAssignment(data)
+      setManagerComment(data.manager_comment || '')
       const next={}
       data.template.kras.forEach(kra=>kra.items.forEach(item=>{
         const resp = item.response || {}
@@ -166,6 +184,24 @@ function ReviewerWorkspace({initialList,onListChange}){
   const officialScore=hasThresholdFailure&&rawOfficial!==null?0:rawOfficial
   const cap=assignment?.subordinate_score_cap,pendingSubordinates=Number(assignment?.subordinate_pending_count||0)
 
+  const allEvidence = useMemo(() => {
+    if (!assignment?.template?.kras) return []
+    const list = []
+    assignment.template.kras.forEach(kra => {
+      (kra.items || []).forEach(item => {
+        const v = values[item.id] || {}
+        const files = v.evidence_files || (v.evidence_file ? [v.evidence_file] : [])
+        files.forEach(f => {
+          list.push({ ...f, kraName: kra.name, itemName: item.question })
+        })
+        if (v.evidence_url) {
+          list.push({ url: v.evidence_url, isLink: true, filename: v.evidence_url, kraName: kra.name, itemName: item.question })
+        }
+      })
+    })
+    return list
+  }, [assignment, values])
+
   function setManagerValue(itemId,patch){setValues(currentValues=>({...currentValues,[itemId]:{...currentValues[itemId],...patch,kpi_item_id:itemId}}));setError('');setMessage('')}
   function payload(){
     return items.map(item=>{
@@ -188,15 +224,49 @@ function ReviewerWorkspace({initialList,onListChange}){
     })
   }
 
-  async function saveManagerScore(){if(!id||!canEdit||busy)return;setBusy(true);setError('');try{await api.put(`/kpi/assignments/${id}/responses`,payload());setMessage(`Manager Score saved: ${scoreText(liveManagerScore)}/100.`);await loadAssignment();await refreshList()}catch(e){setError(getError(e))}finally{setBusy(false)}}
+  async function saveManagerScore(){
+    if(!id||!canEdit||busy)return;
+    setBusy(true);setError('');
+    try{
+      await api.put(`/kpi/assignments/${id}/responses`,payload());
+      if(managerComment !== undefined){
+        try{
+          await api.patch(`/kpi/assignments/${id}/manager-comment`, {comment: managerComment});
+        }catch(patchErr){
+          console.warn('Could not patch manager-comment:', patchErr);
+        }
+      }
+      setMessage(`Manager Score saved: ${scoreText(liveManagerScore)}/100.`);
+      await loadAssignment();
+      await refreshList()
+    }catch(e){
+      setError(getError(e))
+    }finally{
+      setBusy(false)
+    }
+  }
+
   async function submitManagerReview(){
     if(!canEdit)return
     if(!managerReady){setError('Complete every Manager achieved value before submitting the review.');return}
     if(pendingSubordinates>0){setError(`Complete ${pendingSubordinates} subordinate KPI review${pendingSubordinates===1?'':'s'} first.`);return}
     if(cap!==null&&cap!==undefined&&liveManagerScore>Number(cap)){setError(`Manager Score cannot exceed summarized subordinate score ${cap}/100.`);return}
     setBusy(true);setError('');setMessage('')
-    try{await api.put(`/kpi/assignments/${id}/responses`,payload());const{data}=await api.post(`/kpi/assignments/${id}/manager-review`,{decision:'approved',comments:isSuperAdmin?'Manager Score reviewed/updated by Super Admin.':'Manager Score submitted by reporting person.'});setMessage(`Manager review completed. Official Manager Score: ${scoreText(data.manager_score??liveManagerScore)}/100.`);await loadAssignment();await refreshList()}catch(e){setError(getError(e))}finally{setBusy(false)}
+    try{
+      await api.put(`/kpi/assignments/${id}/responses`,payload());
+      const defaultComment = isSuperAdmin ? 'Manager Score reviewed/updated by Super Admin.' : 'Manager Score submitted by reporting person.';
+      const finalComment = managerComment?.trim() ? managerComment.trim() : defaultComment;
+      const{data}=await api.post(`/kpi/assignments/${id}/manager-review`,{decision:'approved',comments:finalComment});
+      setMessage(`Manager review completed. Official Manager Score: ${scoreText(data.manager_score??liveManagerScore)}/100.`);
+      await loadAssignment();
+      await refreshList()
+    }catch(e){
+      setError(getError(e))
+    }finally{
+      setBusy(false)
+    }
   }
+
   async function returnToEmployee(){
     if(!canReturn||busy)return
     const comments=window.prompt('Reason for returning this KPI to the employee:','Please update the KPI achieved values and resubmit.');
@@ -209,7 +279,23 @@ function ReviewerWorkspace({initialList,onListChange}){
       await refreshList()
     }catch(e){setError(getError(e))}finally{setBusy(false)}
   }
-  async function downloadPdf(){if(!id)return;try{const response=await api.get(`/kpi/assignments/${id}/pdf`,{responseType:'blob'}),blob=new Blob([response.data],{type:'application/pdf'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`kpi_report_${(assignment?.employee||'employee').toLowerCase().replace(/[^a-z0-9]+/g,'_')}.pdf`;a.click();URL.revokeObjectURL(url)}catch(e){setError(getError(e))}}
+
+  async function downloadPdf(){
+    if(!id)return;
+    try{
+      const label = periodLabel(assignment) || 'period';
+      const response = await api.get(`/kpi/assignments/${id}/pdf?date_label=${encodeURIComponent(label)}`,{responseType:'blob'});
+      const blob = new Blob([response.data],{type:'application/pdf'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `kpi_${(assignment?.employee||'employee').toLowerCase().replace(/[^a-z0-9]+/g,'_')}_${label.toLowerCase().replace(/[^a-z0-9]+/g,'_')}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }catch(e){
+      setError(getError(e));
+    }
+  }
 
   if(!assignment){
     if(error)return <>
@@ -234,6 +320,89 @@ function ReviewerWorkspace({initialList,onListChange}){
     {assignment.subordinate_score_cap_applies?<div className="subordinate-cap-note"><strong>Subordinate score rule:</strong> {pendingSubordinates>0?`${pendingSubordinates} direct-report KPI review${pendingSubordinates===1?' is':'s are'} still pending. This manager's review cannot be completed until those scores are available.`:`Maximum Manager Score for this employee: ${cap}/100, based on the summarized score of direct reports.`}</div>:null}
     {canReview&&!canEdit?<div className="locked-note" style={{marginBottom:'14px'}}>{assignment.status==='draft'||assignment.status==='not_started'?'Employee must submit the KPI before Manager input can be entered.':managerReviewSubmitted&&!isSuperAdmin?'Manager Score has already been submitted and is locked. Only Super Admin can update it.':assignment.status==='finalized'&&!isSuperAdmin?'This KPI is finalized. Only Super Admin can change the Manager Score.':'Manager Score editing is currently locked for this KPI.'}</div>:null}
 
+    {allEvidence.length > 0 ? (
+      <Card style={{marginBottom:'16px',border:'1px solid #bfdbfe',background:'#f8fbff',borderRadius:'10px'}}>
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'12px',flexWrap:'wrap',gap:'8px'}}>
+          <div style={{display:'flex',alignItems:'center',gap:'8px'}}>
+            <Paperclip size={18} style={{color:'#2563eb'}}/>
+            <strong style={{fontSize:'0.96rem',color:'#1e293b'}}>Employee Evidence & Attachments ({allEvidence.length})</strong>
+          </div>
+          <span style={{fontSize:'0.82rem',color:'#64748b'}}>Attached by employee for review verification · Click to view or download</span>
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill, minmax(300px, 1fr))',gap:'10px'}}>
+          {allEvidence.map((file, idx) => (
+            <div key={idx} style={{
+              display:'flex',
+              alignItems:'center',
+              justifyContent:'space-between',
+              padding:'10px 12px',
+              background:'#ffffff',
+              borderRadius:'8px',
+              border:'1px solid #e2e8f0',
+              boxShadow:'0 1px 2px rgba(0,0,0,0.03)'
+            }}>
+              <div style={{display:'flex',alignItems:'center',gap:'10px',minWidth:0,flex:1,marginRight:'8px'}}>
+                {file.isLink ? <ExternalLink size={16} style={{color:'#2563eb',flexShrink:0}}/> : getFileIcon(file.filename)}
+                <div style={{minWidth:0,flex:1}}>
+                  <div style={{fontWeight:600,fontSize:'0.85rem',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',color:'#1e293b'}} title={file.filename}>
+                    {file.filename}
+                  </div>
+                  <div style={{fontSize:'0.75rem',color:'#64748b',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}} title={`${file.kraName} · ${file.itemName}`}>
+                    {file.itemName} {file.size ? `· ${(file.size/1024).toFixed(0)} KB` : ''}
+                  </div>
+                </div>
+              </div>
+              <div style={{display:'flex',alignItems:'center',gap:'6px',flexShrink:0}}>
+                <a
+                  href={file.isLink ? file.url : apiFileUrl(file)}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{
+                    display:'inline-flex',
+                    alignItems:'center',
+                    gap:'4px',
+                    padding:'4px 8px',
+                    fontSize:'0.78rem',
+                    fontWeight:600,
+                    color:'#2563eb',
+                    background:'#eff6ff',
+                    borderRadius:'5px',
+                    textDecoration:'none',
+                    border:'1px solid #dbeafe'
+                  }}
+                  title="Open file in new tab"
+                >
+                  <Eye size={12}/> Open
+                </a>
+                {!file.isLink ? (
+                  <a
+                    href={apiFileDownloadUrl(file)}
+                    download={file.filename}
+                    style={{
+                      display:'inline-flex',
+                      alignItems:'center',
+                      gap:'4px',
+                      padding:'4px 8px',
+                      fontSize:'0.78rem',
+                      fontWeight:600,
+                      color:'#0f766e',
+                      background:'#f0fdfa',
+                      borderRadius:'5px',
+                      textDecoration:'none',
+                      border:'1px solid #ccfbf1'
+                    }}
+                    title={`Download ${file.filename}`}
+                  >
+                    <Download size={12}/> Download
+                  </a>
+                ) : null}
+              </div>
+            </div>
+          ))}
+        </div>
+      </Card>
+    ) : null}
+
     {assignment.template.kras.map(kra=>{
       const staffAverage=kraAverage(kra,values),managerAverage=kraAverage(kra,values,'manager_',false),staffKra=kraScore(kra,values),managerKra=kraScore(kra,values,'manager_',false)
       return <Card key={kra.id}><div className="kra-review-head"><div><strong>{kra.name}</strong><div className="muted">{kra.items.length} KPI{kra.items.length===1?'':'s'} · each carries 100 marks</div></div><div className="kra-score-summary"><div className="weight-chip">KRA weight {whole(kra.weight)} / 100</div><div>Staff avg {scoreText(staffAverage)} → {scoreText(staffKra)}</div><div>Manager avg {scoreText(managerAverage)} → {scoreText(managerKra)}</div></div></div><div className="table-wrap"><table className="kpi-input-table"><thead><tr><th>KPI parameter & task</th><th>Measurement / target</th><th>Qualifying value</th><th>Staff achieved</th><th>Staff marks</th><th>Manager achieved</th><th>Manager marks</th><th>Employee notes & evidence</th></tr></thead><tbody>{kra.items.map(item=>{
@@ -248,20 +417,61 @@ function ReviewerWorkspace({initialList,onListChange}){
           <td><ManagerInput disabled={!canEdit||busy} item={item} value={v} onChange={patch=>setManagerValue(item.id,patch)}/>{isMeasurementTarget(item)&&v.manager_actual_numeric!==null&&v.manager_actual_numeric!==undefined?<div className="cell-help">{formatMetric(v.manager_actual_numeric,item)}</div>:null}</td>
           <td><Calculated item={item} value={v} prefix="manager_"/></td>
           <td>
-            <div>{v.remarks||v.measurement||'—'}</div>
+            {v.remarks||v.measurement ? <div style={{fontSize:'0.88rem',marginBottom:'6px'}}>{v.remarks||v.measurement}</div> : null}
+            {!v.remarks && !v.measurement && evFiles.length === 0 && !v.evidence_url ? <div className="muted">—</div> : null}
             {evFiles.length>0?(
-              <div style={{marginTop:'6px',display:'flex',flexDirection:'column',gap:'4px'}}>
+              <div style={{marginTop:'6px',display:'flex',flexDirection:'column',gap:'6px'}}>
                 {evFiles.map((f,fi)=>(
-                  <a key={fi} className="evidence-link" href={apiFileUrl(f)} target="_blank" rel="noreferrer" title={f.filename}>
-                    <ExternalLink size={12}/>{f.filename}
-                  </a>
+                  <div key={fi} style={{
+                    display:'flex',
+                    alignItems:'center',
+                    justifyContent:'space-between',
+                    padding:'6px 8px',
+                    background:'#f8fafc',
+                    borderRadius:'6px',
+                    border:'1px solid #e2e8f0',
+                    gap:'8px'
+                  }}>
+                    <div style={{display:'flex',alignItems:'center',gap:'6px',minWidth:0,flex:1}}>
+                      {getFileIcon(f.filename)}
+                      <span style={{fontSize:'0.82rem',fontWeight:500,color:'#334155',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',maxWidth:'140px'}} title={f.filename}>
+                        {f.filename}
+                      </span>
+                      {f.size ? <span style={{fontSize:'0.72rem',color:'#94a3b8',flexShrink:0}}>({(f.size/1024).toFixed(0)} KB)</span> : null}
+                    </div>
+                    <div style={{display:'flex',alignItems:'center',gap:'4px',flexShrink:0}}>
+                      <a
+                        href={apiFileUrl(f)}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{display:'inline-flex',alignItems:'center',gap:'3px',fontSize:'0.75rem',fontWeight:600,color:'#2563eb',textDecoration:'none',padding:'2px 6px',borderRadius:'4px',background:'#eff6ff'}}
+                        title={`Open ${f.filename}`}
+                      >
+                        <Eye size={11}/> Open
+                      </a>
+                      <a
+                        href={apiFileDownloadUrl(f)}
+                        download={f.filename}
+                        style={{display:'inline-flex',alignItems:'center',gap:'3px',fontSize:'0.75rem',fontWeight:600,color:'#0f766e',textDecoration:'none',padding:'2px 6px',borderRadius:'4px',background:'#f0fdfa'}}
+                        title={`Download ${f.filename}`}
+                      >
+                        <Download size={11}/> Download
+                      </a>
+                    </div>
+                  </div>
                 ))}
               </div>
             ):null}
             {v.evidence_url?(
-              <div style={{marginTop:'4px'}}>
-                <a className="evidence-link" href={v.evidence_url} target="_blank" rel="noreferrer">
-                  <ExternalLink size={12}/>Open evidence link
+              <div style={{marginTop:'6px'}}>
+                <a
+                  className="evidence-link"
+                  href={v.evidence_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{display:'inline-flex',alignItems:'center',gap:'4px',fontSize:'0.8rem',fontWeight:600,color:'#2563eb',textDecoration:'none',padding:'4px 8px',borderRadius:'5px',background:'#eff6ff',border:'1px solid #dbeafe'}}
+                >
+                  <ExternalLink size={12}/> Open Evidence Link
                 </a>
               </div>
             ):null}
@@ -269,6 +479,43 @@ function ReviewerWorkspace({initialList,onListChange}){
         </tr>
       })}</tbody></table></div></Card>
     })}
+
+    {canReview ? (
+      <Card style={{marginTop:'16px'}}>
+        <div style={{fontWeight:600,fontSize:'0.95rem',marginBottom:'6px',display:'flex',alignItems:'center',gap:'8px'}}>
+          <MessageSquare size={16} style={{color:'#2563eb'}}/>
+          <span>Manager Review Feedback & Remarks (Optional)</span>
+        </div>
+        <p className="cell-help" style={{marginBottom:'8px'}}>
+          Provide feedback or justification explaining why marks were adjusted or reduced. This feedback is visible to the employee and included in the exported PDF report.
+        </p>
+        <textarea
+          ref={textareaRef}
+          disabled={!canEdit || busy}
+          value={managerComment}
+          onChange={e => {
+            setManagerComment(e.target.value)
+            e.target.style.height = 'auto'
+            e.target.style.height = `${Math.max(84, e.target.scrollHeight)}px`
+          }}
+          placeholder="Enter overall review comments, reasons for score deduction, or recommendations for improvement..."
+          style={{
+            width: '100%',
+            minHeight: '84px',
+            lineHeight: '1.6',
+            padding: '12px 14px',
+            borderRadius: '8px',
+            border: '1px solid #cbd5e1',
+            fontFamily: 'inherit',
+            fontSize: '0.92rem',
+            boxSizing: 'border-box',
+            display: 'block',
+            resize: 'vertical',
+            overflowY: 'hidden'
+          }}
+        />
+      </Card>
+    ) : null}
 
     {canReview?<div className="footer-actions sticky-actions">{canReturn?<button className="secondary" disabled={busy} onClick={returnToEmployee}><RotateCcw size={16}/>Return to Employee</button>:<span/>}{managerReviewSubmitted&&!isSuperAdmin?<div className="locked-note" style={{margin:0}}>Manager Score submitted · Super Admin only can update</div>:<div className="responsive-actions"><button className="secondary" disabled={busy||!canEdit} onClick={saveManagerScore}><Save size={16}/>{busy?'Saving...':'Save Manager Score'}</button><button className="primary" disabled={busy||!canEdit||!managerReady||pendingSubordinates>0||(cap!==null&&cap!==undefined&&liveManagerScore>Number(cap))} onClick={submitManagerReview}><Send size={16}/>{managerReviewSubmitted&&isSuperAdmin?'Update Manager Score':'Submit Manager Review'}</button></div>}</div>:null}
   </>

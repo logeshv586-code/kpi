@@ -1,6 +1,6 @@
 import {useRef,useState} from 'react'
-import {File,FileSpreadsheet,FileText,Image as ImageIcon,Plus,UploadCloud,X} from 'lucide-react'
-import {apiFileUrl,apiPostForm,getError} from '../lib/api'
+import {Download,File,FileSpreadsheet,FileText,Image as ImageIcon,Plus,UploadCloud,X} from 'lucide-react'
+import {apiFileDownloadUrl,apiFileUrl,apiPostForm,getError} from '../lib/api'
 
 function getFileIcon(filename){
   const name=String(filename||'').toLowerCase()
@@ -24,9 +24,9 @@ export default function FileUpload({
   const [drag,setDrag]=useState(false),[progress,setProgress]=useState(0),[uploading,setUploading]=useState(false),[error,setError]=useState('')
 
   const fileList = multiple
-    ? (Array.isArray(value) ? value : (value?.filename ? [value] : []))
+    ? (Array.isArray(value) ? value : (value?.filename || value?.file_id ? [value] : []))
     : null
-  const singleExisting = !multiple && value?.filename ? value : null
+  const singleExisting = !multiple && (value?.filename || value?.file_id) ? value : null
 
   async function uploadFiles(filesToUpload){
     if(!filesToUpload||!filesToUpload.length||disabled)return
@@ -77,20 +77,32 @@ export default function FileUpload({
     {multiple ? (
       fileList && fileList.length > 0 ? (
         <div className="file-chips-list">
-          {fileList.map((file,idx)=>(
-            <div key={file.file_id||idx} className="file-chip">
-              {getFileIcon(file.filename)}
-              <a href={apiFileUrl(file)} target="_blank" rel="noreferrer" title={file.filename}>
-                {file.filename}
-              </a>
-              <span>{file.size?`${(file.size/1024).toFixed(0)} KB`:''}</span>
-              {!disabled?(
-                <button type="button" onClick={()=>removeMultiple(idx)} title="Remove file">
-                  <X size={13}/>
-                </button>
-              ):null}
-            </div>
-          ))}
+          {fileList.map((file,idx)=>{
+            const fname = file.filename || (file.file_id ? `Evidence_${file.file_id.slice(0,8)}.pdf` : 'Attached file')
+            return (
+              <div key={file.file_id||idx} className="file-chip">
+                {getFileIcon(fname)}
+                <a href={apiFileUrl(file)} target="_blank" rel="noreferrer" title={fname}>
+                  {fname}
+                </a>
+                <span>{file.size?`${(file.size/1024).toFixed(0)} KB`:''}</span>
+                <a
+                  href={apiFileDownloadUrl(file)}
+                  download={fname}
+                  className="chip-action-btn"
+                  title={`Download ${fname}`}
+                  style={{display:'inline-flex',alignItems:'center',color:'#475569',padding:'2px',textDecoration:'none'}}
+                >
+                  <Download size={13}/>
+                </a>
+                {!disabled?(
+                  <button type="button" onClick={()=>removeMultiple(idx)} title="Remove file">
+                    <X size={13}/>
+                  </button>
+                ):null}
+              </div>
+            )
+          })}
           {!disabled?(
             <button
               type="button"
@@ -119,18 +131,32 @@ export default function FileUpload({
       )
     ) : (
       singleExisting ? (
-        <div className="file-chip">
-          {getFileIcon(singleExisting.filename)}
-          <a href={apiFileUrl(singleExisting)} target="_blank" rel="noreferrer">
-            {singleExisting.filename}
-          </a>
-          <span>{singleExisting.size?`${(singleExisting.size/1024).toFixed(0)} KB`:''}</span>
-          {!disabled?(
-            <button type="button" onClick={()=>onUploaded?.(null)} title="Remove">
-              <X size={13}/>
-            </button>
-          ):null}
-        </div>
+        (() => {
+          const sfname = singleExisting.filename || (singleExisting.file_id ? `Evidence_${singleExisting.file_id.slice(0,8)}.pdf` : 'Attached file')
+          return (
+            <div className="file-chip">
+              {getFileIcon(sfname)}
+              <a href={apiFileUrl(singleExisting)} target="_blank" rel="noreferrer" title={sfname}>
+                {sfname}
+              </a>
+              <span>{singleExisting.size?`${(singleExisting.size/1024).toFixed(0)} KB`:''}</span>
+              <a
+                href={apiFileDownloadUrl(singleExisting)}
+                download={sfname}
+                className="chip-action-btn"
+                title={`Download ${sfname}`}
+                style={{display:'inline-flex',alignItems:'center',color:'#475569',padding:'2px',textDecoration:'none'}}
+              >
+                <Download size={13}/>
+              </a>
+              {!disabled?(
+                <button type="button" onClick={()=>onUploaded?.(null)} title="Remove">
+                  <X size={13}/>
+                </button>
+              ):null}
+            </div>
+          )
+        })()
       ) : (
         <div
           className={`drop-zone ${drag?'drag':''} ${disabled?'disabled':''}`}

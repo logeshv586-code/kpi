@@ -1,9 +1,17 @@
 import {useEffect,useMemo,useState} from 'react'
-import {CalendarDays,CheckCircle2,ChevronLeft,ChevronRight,Download,ExternalLink,Eye,FileUp,Info} from 'lucide-react'
+import {CalendarDays,CheckCircle2,ChevronLeft,ChevronRight,Download,ExternalLink,Eye,File,FileSpreadsheet,FileText,FileUp,Image as ImageIcon,Info,MessageSquare,Paperclip} from 'lucide-react'
 import {useSearchParams} from 'react-router-dom'
-import {api,apiFileUrl,getError,apiPostForm} from '../lib/api'
+import {api,apiFileDownloadUrl,apiFileUrl,getError,apiPostForm} from '../lib/api'
 import {useAuth} from '../lib/auth'
 import FileUpload from '../components/FileUpload'
+
+function getFileIcon(filename){
+  const name=String(filename||'').toLowerCase()
+  if(/\.(png|jpe?g|webp|gif|bmp|svg)$/.test(name))return <ImageIcon size={14} style={{color:'#0284c7',flexShrink:0}}/>
+  if(/\.(xlsx|xls|csv)$/.test(name))return <FileSpreadsheet size={14} style={{color:'#16a34a',flexShrink:0}}/>
+  if(/\.pdf$/.test(name))return <FileText size={14} style={{color:'#dc2626',flexShrink:0}}/>
+  return <File size={14} style={{color:'#64748b',flexShrink:0}}/>
+}
 import {Card,ErrorBox,Loader,Modal,PageHeader,Status} from '../components/UI'
 import {assignmentDepartment,compareText} from '../lib/sorting'
 import {chooseDefaultReviewPeriod} from '../lib/reviewPeriodSelection'
@@ -185,6 +193,24 @@ export default function KpiInputV2(){
   const liveScore=assignment?templateScore(assignment.template.kras,values):0
   const ready=allItems.length>0&&missing.length===0
 
+  const allEvidence = useMemo(() => {
+    if (!assignment?.template?.kras) return []
+    const list = []
+    assignment.template.kras.forEach(kra => {
+      (kra.items || []).forEach(item => {
+        const v = values[item.id] || {}
+        const files = v.evidence_files || (v.evidence_file ? [v.evidence_file] : [])
+        files.forEach(f => {
+          list.push({ ...f, kraName: kra.name, itemName: item.question })
+        })
+        if (v.evidence_url) {
+          list.push({ url: v.evidence_url, isLink: true, filename: v.evidence_url, kraName: kra.name, itemName: item.question })
+        }
+      })
+    })
+    return list
+  }, [assignment, values])
+
   function setValue(itemId,patch){setValues(current=>({...current,[itemId]:{...current[itemId],...patch,kpi_item_id:itemId}}));setError('');setMessage('')}
   function payload(){
     return allItems.map(item=>{
@@ -207,12 +233,32 @@ export default function KpiInputV2(){
     })
   }
 
-  async function save(){if(!id||busy)return false;setBusy(true);setError('');setMessage('');try{const{data}=await api.put(`/kpi/assignments/${id}/responses`,payload());setMessage(`Draft saved. Final score: ${scoreText(data.score)}/100`);await loadAssignment();loadList();return true}catch(e){setError(getError(e));return false}finally{setBusy(false)}}
+  async function save(){if(!id||busy)return false;setBusy(true);setError('');setMessage('');try{const{data}=await api.put(`/kpi/assignments/${id}/responses`,payload());if(isManagerMode&&assignment?.manager_comment!==undefined){try{await api.patch(`/kpi/assignments/${id}/manager-comment`,{comment:assignment.manager_comment})}catch(e){console.warn(e)}}setMessage(`Draft saved. Final score: ${scoreText(data.score)}/100`);await loadAssignment();loadList();return true}catch(e){setError(getError(e));return false}finally{setBusy(false)}}
   async function submit(){if(!ready){setError(`Complete all KPI inputs before submitting. ${missing.length} KPI${missing.length===1?' is':'s are'} still missing.`);return}setBusy(true);setError('');setMessage('');try{const saved=await api.put(`/kpi/assignments/${id}/responses`,payload());const{data}=await api.post(`/kpi/assignments/${id}/submit`);setMessage(`Submitted successfully. Final score: ${scoreText(data.score??saved.data.score??liveScore)}/100.`);await loadAssignment();loadList()}catch(e){setError(getError(e))}finally{setBusy(false)}}
   async function reopen(){try{await api.post(`/kpi/assignments/${id}/reopen`,{reason:`Reopened by ${user?.name||'HR'}`});setMessage('KPI reopened for editing.');await loadAssignment();loadList()}catch(e){setError(getError(e))}}
 
   async function downloadAssignmentPdf(targetAssignment){if(!targetAssignment?.id)return;try{const label=periodLabel(targetAssignment),response=await api.get(`/kpi/assignments/${targetAssignment.id}/pdf?date_label=${encodeURIComponent(label)}`,{responseType:'blob'}),blob=new Blob([response.data],{type:'application/pdf'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`kpi_${(targetAssignment.employee||'employee').replace(/\s+/g,'_')}_${label.replace(/\s+/g,'_')}.pdf`;a.click();URL.revokeObjectURL(url)}catch(e){setError(getError(e))}}
-  async function exportPdf(){if(!id)return;if(!allItems.some(isAnswered)){setError('Enter KPI values before downloading the report.');return}try{await api.put(`/kpi/assignments/${id}/responses`,payload());await downloadAssignmentPdf(currentSummary||assignment)}catch(e){setError(getError(e))}}
+  async function exportPdf(){
+    if(!id)return
+    const hasValues = allItems.some(item => isAnswered(item) || (values[item.id]?.manager_actual_numeric != null) || Boolean(values[item.id]?.manager_selected_option))
+    const hasSaved = (assignment?.responses?.length || 0) > 0
+    if(!hasValues && !hasSaved){
+      setError('Enter KPI values before downloading the report.')
+      return
+    }
+    try{
+      if(!locked && !submitted){
+        try{
+          await api.put(`/kpi/assignments/${id}/responses`, payload())
+        }catch(saveErr){
+          console.warn('Auto-save before export skipped/failed:', saveErr)
+        }
+      }
+      await downloadAssignmentPdf(currentSummary || assignment)
+    }catch(e){
+      setError(getError(e))
+    }
+  }
 
   async function parseImport(fileMeta){if(!fileMeta||!id)return;setImportBusy(true);setError('');try{const fd=new FormData();fd.append('file_id',fileMeta.file_id);fd.append('assignment_id',id);const{data}=await apiPostForm('/files/parse-kpi-excel',fd);setImportPreview(data)}catch(e){setError(getError(e))}finally{setImportBusy(false)}}
   function applyImport(){if(!importPreview)return;setValues(current=>{const next={...current};importPreview.rows.forEach(row=>{if(!row.matched||!row.kpi_item_id)return;const item=allItems.find(i=>i.id===row.kpi_item_id);if(!item)return;next[item.id]={...next[item.id],kpi_item_id:item.id,remarks:row.remarks||next[item.id]?.remarks||''};if(isChoice(item))next[item.id].selected_option=row.selected_option||next[item.id]?.selected_option||'';else if(row.actual_numeric!==null&&row.actual_numeric!==undefined){const value=Math.max(0,Math.round(Number(row.actual_numeric)));next[item.id].actual_numeric=isKraAverage100(item)&&!isMeasurementTarget(item)?Math.min(100,value):value}});return next});setImportPreview(null);setShowImporter(false);setMessage('Imported KPI achieved values applied. Review calculated marks and KRA scores before submitting.')}
@@ -242,6 +288,89 @@ export default function KpiInputV2(){
 
       {!locked?<Card className={ready?'ready-card':'pending-card'}><div className="ready-row">{ready?<CheckCircle2 size={20}/>:<Info size={20}/>}<div><strong>{ready?'Ready to submit':'Complete KPI inputs'}</strong><div className="cell-help">{ready?`All achieved values are filled. Current final score ${scoreText(liveScore)}/100.`:`${missing.length} KPI input${missing.length===1?'':'s'} remaining.`}</div></div></div></Card>:null}
 
+      {allEvidence.length > 0 ? (
+        <Card style={{marginBottom:'16px',border:'1px solid #bfdbfe',background:'#f8fbff',borderRadius:'10px'}}>
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'12px',flexWrap:'wrap',gap:'8px'}}>
+            <div style={{display:'flex',alignItems:'center',gap:'8px'}}>
+              <Paperclip size={18} style={{color:'#2563eb'}}/>
+              <strong style={{fontSize:'0.96rem',color:'#1e293b'}}>Submitted Evidence & Attachments ({allEvidence.length})</strong>
+            </div>
+            <span style={{fontSize:'0.82rem',color:'#64748b'}}>Attached evidence files · Click to open or download</span>
+          </div>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill, minmax(300px, 1fr))',gap:'10px'}}>
+            {allEvidence.map((file, idx) => (
+              <div key={idx} style={{
+                display:'flex',
+                alignItems:'center',
+                justifyContent:'space-between',
+                padding:'10px 12px',
+                background:'#ffffff',
+                borderRadius:'8px',
+                border:'1px solid #e2e8f0',
+                boxShadow:'0 1px 2px rgba(0,0,0,0.03)'
+              }}>
+                <div style={{display:'flex',alignItems:'center',gap:'10px',minWidth:0,flex:1,marginRight:'8px'}}>
+                  {file.isLink ? <ExternalLink size={16} style={{color:'#2563eb',flexShrink:0}}/> : getFileIcon(file.filename)}
+                  <div style={{minWidth:0,flex:1}}>
+                    <div style={{fontWeight:600,fontSize:'0.85rem',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',color:'#1e293b'}} title={file.filename}>
+                      {file.filename}
+                    </div>
+                    <div style={{fontSize:'0.75rem',color:'#64748b',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}} title={`${file.kraName} · ${file.itemName}`}>
+                      {file.itemName} {file.size ? `· ${(file.size/1024).toFixed(0)} KB` : ''}
+                    </div>
+                  </div>
+                </div>
+                <div style={{display:'flex',alignItems:'center',gap:'6px',flexShrink:0}}>
+                  <a
+                    href={file.isLink ? file.url : apiFileUrl(file)}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{
+                      display:'inline-flex',
+                      alignItems:'center',
+                      gap:'4px',
+                      padding:'4px 8px',
+                      fontSize:'0.78rem',
+                      fontWeight:600,
+                      color:'#2563eb',
+                      background:'#eff6ff',
+                      borderRadius:'5px',
+                      textDecoration:'none',
+                      border:'1px solid #dbeafe'
+                    }}
+                    title="Open file in new tab"
+                  >
+                    <Eye size={12}/> Open
+                  </a>
+                  {!file.isLink ? (
+                    <a
+                      href={apiFileDownloadUrl(file)}
+                      download={file.filename}
+                      style={{
+                        display:'inline-flex',
+                        alignItems:'center',
+                        gap:'4px',
+                        padding:'4px 8px',
+                        fontSize:'0.78rem',
+                        fontWeight:600,
+                        color:'#0f766e',
+                        background:'#f0fdfa',
+                        borderRadius:'5px',
+                        textDecoration:'none',
+                        border:'1px solid #ccfbf1'
+                      }}
+                      title={`Download ${file.filename}`}
+                    >
+                      <Download size={12}/> Download
+                    </a>
+                  ) : null}
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      ) : null}
+
       <div className="stack">{assignment.template.kras.map(kra=>{
         const staffAverage=kraAverage(kra,values),managerAverage=kraAverage(kra,values,'manager_')
         const staffKra=kraScore(kra,values),managerKra=kraScore(kra,values,'manager_')
@@ -263,7 +392,72 @@ export default function KpiInputV2(){
         </Card>
       })}</div>
 
-      {!locked?<div className="footer-actions sticky-actions"><button className="secondary" onClick={()=>setShowImporter(true)}><FileUp size={16}/>Import Excel / CSV</button><div className="responsive-actions"><button className="secondary" disabled={busy} onClick={save}>{busy?'Saving...':'Save draft'}</button><button className="primary" disabled={busy||!ready} onClick={submit}>{busy?'Working...':'Submit KPI'}</button></div></div>:<div className="locked-note">This KPI is locked after submission.</div>}
+      {isManagerMode && !managerLocked ? (
+        <Card style={{marginTop:'16px'}}>
+          <div style={{fontWeight:600,fontSize:'0.95rem',marginBottom:'6px',display:'flex',alignItems:'center',gap:'8px'}}>
+            <MessageSquare size={16} style={{color:'#2563eb'}}/>
+            <span>Reporting Manager Feedback & Remarks (Optional)</span>
+          </div>
+          <p className="cell-help" style={{marginBottom:'8px'}}>
+            Provide feedback or justification explaining why marks were adjusted or reduced. This feedback is visible to the employee and included in the exported PDF report.
+          </p>
+          <textarea
+            disabled={busy}
+            value={assignment?.manager_comment || ''}
+            onChange={e => {
+              setAssignment(a => ({...a, manager_comment: e.target.value}))
+              e.target.style.height = 'auto'
+              e.target.style.height = `${Math.max(84, e.target.scrollHeight)}px`
+            }}
+            placeholder="Enter overall review comments, reasons for score deduction, or recommendations for improvement..."
+            style={{
+              width: '100%',
+              minHeight: '84px',
+              lineHeight: '1.6',
+              padding: '12px 14px',
+              borderRadius: '8px',
+              border: '1px solid #cbd5e1',
+              fontFamily: 'inherit',
+              fontSize: '0.92rem',
+              boxSizing: 'border-box',
+              display: 'block',
+              resize: 'vertical',
+              overflowY: 'hidden'
+            }}
+          />
+        </Card>
+      ) : assignment?.manager_comment ? (
+        <Card className="manager-feedback-card" style={{marginTop:'16px',borderLeft:'4px solid #2563eb',background:'#f8fafc'}}>
+          <div style={{display:'flex',alignItems:'center',gap:'8px',marginBottom:'6px'}}>
+            <MessageSquare size={16} style={{color:'#2563eb'}}/>
+            <strong style={{color:'#0f172a'}}>Reporting Manager Feedback & Remarks</strong>
+            {assignment.manager_name ? <span className="cell-help">by {assignment.manager_name}</span> : null}
+          </div>
+          <div style={{color:'#334155',whiteSpace:'pre-wrap',lineHeight:'1.5',fontSize:'0.92rem'}}>
+            {assignment.manager_comment}
+          </div>
+        </Card>
+      ) : null}
+
+      {!locked ? (
+        <div className="footer-actions sticky-actions">
+          {['superadmin','hr','manager'].includes(user?.role) ? (
+            <button className="secondary" onClick={() => setShowImporter(true)}>
+              <FileUp size={16}/>Import Excel / CSV
+            </button>
+          ) : null}
+          <div className="responsive-actions">
+            <button className="secondary" disabled={busy} onClick={save}>
+              {busy ? 'Saving...' : 'Save draft'}
+            </button>
+            <button className="primary" disabled={busy || !ready} onClick={submit}>
+              {busy ? 'Working...' : 'Submit KPI'}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="locked-note">This KPI is locked after submission.</div>
+      )}
     </>}
 
     {showMonths?<Modal title={`KPI Review Periods - ${people.find(p=>p.key===person)?.name||'Employee'}`} onClose={()=>setShowMonths(false)} className="wide-modal" actions={<button className="secondary" onClick={()=>setShowMonths(false)}>Close</button>}>

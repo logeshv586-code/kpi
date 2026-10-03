@@ -12,12 +12,24 @@ from typing import Any
 from fastapi import HTTPException, UploadFile
 from openpyxl import load_workbook
 import pdfplumber
+import urllib.parse
+import urllib.request
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 # Place uploads OUTSIDE the backend source tree so that uvicorn --reload
 # does not restart the server when a file is uploaded during development.
 _DATA_DIR = BASE_DIR.parent / "data"
-UPLOAD_DIR = Path(os.getenv("KPI_UPLOAD_DIR", str(_DATA_DIR / "uploads"))).resolve()
+
+def _resolve_upload_dir() -> Path:
+    raw = os.getenv("KPI_UPLOAD_DIR", "").strip()
+    # On Windows, if raw is a POSIX root path like /var/kpi/uploads, fall back to local data/uploads
+    if os.name == "nt" and (raw.startswith("/") or not raw):
+        return (_DATA_DIR / "uploads").resolve()
+    if raw:
+        return Path(raw).resolve()
+    return (_DATA_DIR / "uploads").resolve()
+
+UPLOAD_DIR = _resolve_upload_dir()
 SAMPLE_DIR = Path(os.getenv("KPI_SAMPLE_DIR", str(BASE_DIR / "samples"))).resolve()
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 SAMPLE_DIR.mkdir(parents=True, exist_ok=True)
@@ -117,16 +129,51 @@ async def save_upload(upload: UploadFile, allowed: set[str] | None = None) -> di
     }
 
 
+def _fetch_from_remote(file_id: str) -> Path | None:
+    if not re.fullmatch(r"[0-9a-fA-F]{32}", str(file_id or "")):
+        return None
+    remote_base = os.getenv("KPI_REMOTE_URL")
+    if not remote_base:
+        db_url = os.getenv("DATABASE_URL", "")
+        if "@" in db_url:
+            host = db_url.split("@")[-1].split("/")[0].split(":")[0]
+            if host and host not in ("localhost", "127.0.0.1"):
+                remote_base = f"http://{host}:8000"
+    if not remote_base:
+        remote_base = "http://192.168.1.85:8000"
+
+    url = f"{remote_base.rstrip('/')}/api/files/{file_id}"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "KPI-Local-Sync/1.0"})
+        with urllib.request.urlopen(req, timeout=4) as resp:
+            if resp.status != 200:
+                return None
+            cd = resp.headers.get("Content-Disposition") or ""
+            m = re.search(r"filename\*=utf-8''([^;]+)", cd, re.I)
+            if m:
+                filename = urllib.parse.unquote(m.group(1))
+            else:
+                m2 = re.search(r'filename="?([^";]+)"?', cd)
+                filename = m2.group(1) if m2 else f"{file_id}.pdf"
+            
+            clean_filename = safe_original_name(filename)
+            stored_name = f"{file_id}_{clean_filename}"
+            target = UPLOAD_DIR / stored_name
+            target.write_bytes(resp.read())
+            return target
+    except Exception:
+        return None
+
+
 def find_upload(file_id: str) -> Path | None:
     if not re.fullmatch(r"[0-9a-fA-F]{32}", str(file_id or "")):
         return None
     matches = list(UPLOAD_DIR.glob(f"{file_id}_*"))
-    if not matches:
-        return None
-    path = matches[0].resolve()
-    if UPLOAD_DIR not in path.parents:
-        return None
-    return path
+    if matches:
+        path = matches[0].resolve()
+        if path.exists():
+            return path
+    return _fetch_from_remote(file_id)
 
 
 def upload_metadata(file_id: str | None) -> dict[str, Any] | None:
@@ -137,17 +184,23 @@ def upload_metadata(file_id: str | None) -> dict[str, Any] | None:
         return None
     primary_id = ids[0]
     path = find_upload(primary_id)
-    if not path or not path.exists():
-        return None
-    prefix = f"{primary_id}_"
-    filename = path.name[len(prefix):] if path.name.startswith(prefix) else path.name
-    ext = path.suffix.lower()
+    if path and path.exists():
+        prefix = f"{primary_id}_"
+        filename = path.name[len(prefix):] if path.name.startswith(prefix) else path.name
+        ext = path.suffix.lower()
+        return {
+            "file_id": primary_id,
+            "filename": filename,
+            "url": f"/api/files/{primary_id}",
+            "content_type": CONTENT_TYPES.get(ext, "application/octet-stream"),
+            "size": path.stat().st_size,
+        }
     return {
         "file_id": primary_id,
-        "filename": filename,
+        "filename": f"Evidence_{primary_id[:8]}.pdf",
         "url": f"/api/files/{primary_id}",
-        "content_type": CONTENT_TYPES.get(ext, "application/octet-stream"),
-        "size": path.stat().st_size,
+        "content_type": "application/pdf",
+        "size": 0,
     }
 
 

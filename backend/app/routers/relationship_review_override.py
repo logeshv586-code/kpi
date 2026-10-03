@@ -26,7 +26,12 @@ from ..models import (
     TemplateStatus,
     User,
 )
+from pydantic import BaseModel
 from ..schemas import ResponseIn, ReviewIn, ReopenIn
+
+
+class ManagerCommentIn(BaseModel):
+    comment: str | None = None
 from ..services import (
     audit,
     calculate_achievement_percent,
@@ -375,6 +380,13 @@ def relationship_get_assignment(
         not assignment.cycle.is_locked and assignment.cycle.status != CycleStatus.closed
     )
 
+    mgr_comment = assignment.manager_comment
+    if not mgr_comment and reviews:
+        for rev in reversed(reviews):
+            if rev.comments:
+                mgr_comment = rev.comments
+                break
+
     return {
         "id": assignment.id,
         "employee": assignment.user.name,
@@ -390,6 +402,7 @@ def relationship_get_assignment(
         "manager_score": assignment.manager_score,
         "final_score": assignment.final_score,
         "official_score": _official_score(assignment),
+        "manager_comment": mgr_comment,
         "can_review": can_review,
         "can_edit_manager_score": bool(can_review and review_status_ok and cycle_editable),
         "template": data,
@@ -609,6 +622,9 @@ def _complete_manager_review(
     else:
         assignment.status = AssignmentStatus.manager_reviewed
 
+    if payload.comments:
+        assignment.manager_comment = payload.comments
+
     review_payload = payload.model_dump()
     # Final scoring is never overridden by the employee score or a free-form
     # score override. The weighted Manager Score is authoritative.
@@ -633,6 +649,7 @@ def _complete_manager_review(
         "status": assignment.status.value,
         "manager_score": manager_score,
         "final_score": assignment.final_score,
+        "manager_comment": assignment.manager_comment,
     }
 
 
@@ -647,6 +664,23 @@ def relationship_manager_review(
     if not assignment:
         raise HTTPException(404, "Assignment not found")
     return _complete_manager_review(assignment, payload, db, user)
+
+
+@kpi_router.router.patch("/assignments/{assignment_id}/manager-comment")
+def relationship_save_manager_comment(
+    assignment_id: int,
+    payload: ManagerCommentIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    assignment = _load_assignment(db, assignment_id)
+    if not assignment:
+        raise HTTPException(404, "Assignment not found")
+    if not _can_review(user, assignment):
+        raise HTTPException(403, "Only the reporting manager or HR/Admin can save manager comments.")
+    assignment.manager_comment = payload.comment
+    db.commit()
+    return {"ok": True, "manager_comment": assignment.manager_comment}
 
 
 @kpi_submit_override.router.post("/assignments/{assignment_id}/submit")
@@ -800,7 +834,9 @@ def relationship_assignment_pdf(
         raise HTTPException(403, "Forbidden")
 
     response_map = {r.kpi_item_id: r for r in assignment.responses}
-    if not any(_employee_answer_present(r.item, r) for r in assignment.responses):
+    has_employee = any(_employee_answer_present(r.item, r) for r in assignment.responses)
+    has_manager = any(_manager_answer_present(r.item, r) for r in assignment.responses)
+    if not (has_employee or has_manager) and not assignment.responses:
         raise HTTPException(400, "No KPI input data registered for this period yet.")
 
     review_complete = assignment.status in {AssignmentStatus.manager_reviewed, AssignmentStatus.finalized} and assignment.manager_score is not None
@@ -817,7 +853,15 @@ def relationship_assignment_pdf(
             styles["BodyText"],
         )
     )
-    score_text = f"{official:.1f} / 100" if official is not None else "Pending Manager Review"
+    if official is not None:
+        score_text = f"{official:.1f} / 100"
+    elif assignment.manager_score is not None:
+        score_text = f"{assignment.manager_score:.1f} / 100 (Manager Review)"
+    elif assignment.calculated_score is not None:
+        score_text = f"{assignment.calculated_score:.1f} / 100 (Staff Calculated - Pending Manager Review)"
+    else:
+        score_text = "Pending Manager Review"
+
     story.append(
         Paragraph(
             f"<b>Official Score:</b> {score_text} &nbsp;&nbsp; <b>Reporting Manager:</b> {(assignment.user.manager.name if assignment.user.manager else 'Super Admin review required')} &nbsp;&nbsp; <b>Template:</b> {assignment.template.name}",
@@ -859,7 +903,14 @@ def relationship_assignment_pdf(
             elif threshold["passed"] is True and threshold["rule"] != "none":
                 target_parts.append("Threshold achieved")
             target_cell = Paragraph("<br/>".join(target_parts) if target_parts else "—", styles["BodyText"])
-            marks = f"{manager_mark:.1f}" if review_complete else "Pending"
+            if review_complete:
+                marks = f"{manager_mark:.1f}"
+            elif response and response.manager_score:
+                marks = f"{response.manager_score:.1f} (Mgr)"
+            elif response and response.score is not None:
+                marks = f"{response.score:.1f} (Staff)"
+            else:
+                marks = "Pending"
             data.append([
                 Paragraph(item.question, styles["BodyText"]),
                 target_cell,
@@ -883,6 +934,32 @@ def relationship_assignment_pdf(
         ("RIGHTPADDING", (0, 0), (-1, -1), 4),
     ]))
     story.append(table)
+
+    mgr_feedback = assignment.manager_comment
+    if not mgr_feedback and assignment.reviews:
+        for rev in reversed(assignment.reviews):
+            if rev.comments:
+                mgr_feedback = rev.comments
+                break
+
+    if mgr_feedback and mgr_feedback.strip():
+        story.append(Spacer(1, 10))
+        feedback_content = [
+            Paragraph("<b>Reporting Manager Review Feedback & Notes:</b>", styles["BodyText"]),
+            Spacer(1, 4),
+            Paragraph(mgr_feedback.replace("\n", "<br/>"), styles["Normal"])
+        ]
+        feedback_table = Table([[feedback_content]], colWidths=[182 * mm])
+        feedback_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F1F5F9")),
+            ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#94A3B8")),
+            ("LEFTPADDING", (0, 0), (-1, -1), 8),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+            ("TOPPADDING", (0, 0), (-1, -1), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ]))
+        story.append(feedback_table)
+
     doc.build(story)
     buf.seek(0)
     clean_tag = period_title.replace(" ", "_").replace("/", "_")

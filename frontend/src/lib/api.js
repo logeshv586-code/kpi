@@ -119,6 +119,12 @@ export function apiFileUrl(value){
   return url
 }
 
+export function apiFileDownloadUrl(value){
+  const base = apiFileUrl(value)
+  if(!base) return ''
+  return base.includes('?') ? `${base}&download=true` : `${base}?download=true`
+}
+
 export async function downloadApiFile(endpoint, fallbackName='download'){
   const response=await api.get(endpoint,{responseType:'blob'})
   const blobUrl=URL.createObjectURL(response.data)
