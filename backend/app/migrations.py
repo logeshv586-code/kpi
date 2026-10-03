@@ -69,3 +69,15 @@ def ensure_schema_upgrades():
         if "manager_comment" not in columns:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE kpi_assignments ADD COLUMN manager_comment TEXT"))
+    if "uploaded_files" not in tables:
+        with engine.begin() as conn:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS uploaded_files (
+                    file_id VARCHAR(64) PRIMARY KEY,
+                    filename VARCHAR(255) NOT NULL,
+                    content_type VARCHAR(120) NOT NULL,
+                    size INTEGER NOT NULL DEFAULT 0,
+                    data BYTEA NOT NULL,
+                    created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc')
+                )
+            """))
