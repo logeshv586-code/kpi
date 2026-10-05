@@ -75,7 +75,7 @@ export function apiPostForm(path, formData, {onUploadProgress}={}){
         return
       }
       if(xhr.status===413){
-        reject(Object.assign(new Error('File too large for Nginx (increase client_max_body_size to 10m).'),{response:{status:413,data}}))
+        reject(Object.assign(new Error('File too large for server / Nginx (exceeds limit; ensure client_max_body_size is 100m).'),{response:{status:413,data}}))
         return
       }
       if(xhr.status===502||xhr.status===503){

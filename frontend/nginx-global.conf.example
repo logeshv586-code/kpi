@@ -2,7 +2,7 @@
 # (only needed if uploads fail with 413 or proxy times out)
 #
 # http {
-#     client_max_body_size 10m;
+#     client_max_body_size 100m;
 #     proxy_connect_timeout 60s;
 #     proxy_send_timeout 300s;
 #     proxy_read_timeout 300s;
