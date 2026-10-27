@@ -27,27 +27,25 @@ export function chooseDefaultReviewPeriod(rows,date=new Date(),reviewType='month
   if(!available.length)return null
 
   const current=localMonthKey(date)
-  const exact=available.filter(row=>rowMonth(row)===current)
-  const exactPreferred=preferReviewType(exact,reviewType)
-  if(exactPreferred)return exactPreferred
+  const currentMonthRows=available.filter(row=>rowMonth(row)===current)
+  const currentPreferred=preferReviewType(currentMonthRows,reviewType)
+  if(currentPreferred)return currentPreferred
 
   const past=available
     .filter(row=>rowMonth(row)&&rowMonth(row)<current)
-    .sort((a,b)=>rowMonth(b).localeCompare(rowMonth(a))||String(b.id||'').localeCompare(String(a.id||'')))
+    .sort((a,b)=>rowMonth(b).localeCompare(rowMonth(a))||Number(b.id||0)-Number(a.id||0))
   if(past.length){
-    const latestMonth=rowMonth(past[0])
-    return preferReviewType(past.filter(row=>rowMonth(row)===latestMonth),reviewType)
+    const latestPastMonth=rowMonth(past[0])
+    const latestPastRows=past.filter(row=>rowMonth(row)===latestPastMonth)
+    return preferReviewType(latestPastRows,reviewType)||past[0]
   }
 
-  const future=available
-    .filter(row=>rowMonth(row)&&rowMonth(row)>current)
-    .sort((a,b)=>rowMonth(a).localeCompare(rowMonth(b))||String(a.id||'').localeCompare(String(b.id||'')))
-  if(future.length){
-    const earliestMonth=rowMonth(future[0])
-    return preferReviewType(future.filter(row=>rowMonth(row)===earliestMonth),reviewType)
-  }
-
-  return preferReviewType(available,reviewType)
+  const sorted=[...available].sort((a,b)=>{
+    const ma=rowMonth(a),mb=rowMonth(b)
+    if(ma!==mb)return mb.localeCompare(ma)
+    return Number(b.id||0)-Number(a.id||0)
+  })
+  return sorted[0]
 }
 
 export function chooseDefaultReportOption(reviewType,options,date=new Date()){

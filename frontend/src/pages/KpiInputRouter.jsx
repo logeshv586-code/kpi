@@ -1,5 +1,5 @@
 import {useEffect,useMemo,useRef,useState} from 'react'
-import {Download,ExternalLink,Eye,File,FileSpreadsheet,FileText,Image as ImageIcon,MessageSquare,Paperclip,RotateCcw,Save,Send} from 'lucide-react'
+import {ChevronLeft,ChevronRight,Download,ExternalLink,Eye,File,FileSpreadsheet,FileText,Image as ImageIcon,MessageSquare,Paperclip,Plus,RotateCcw,Save,Send} from 'lucide-react'
 import {useSearchParams} from 'react-router-dom'
 import {api,apiFileDownloadUrl,apiFileUrl,getError} from '../lib/api'
 import {useAuth} from '../lib/auth'
@@ -112,7 +112,7 @@ function RuleSummary({item}){
 function periodLabel(row){return row?.period_label||row?.cycle||'Review period'}
 
 function ReviewerWorkspace({initialList,onListChange}){
-  const{user}=useAuth()
+  const{user}=useAuth(),isAdminOrHr=['superadmin','hr'].includes(user?.role)
   const[params,setParams]=useSearchParams(),id=params.get('assignment')
   const[list,setList]=useState(initialList||[]),[assignment,setAssignment]=useState(null),[values,setValues]=useState({})
   const[error,setError]=useState(''),[message,setMessage]=useState(''),[busy,setBusy]=useState(false)
@@ -156,7 +156,7 @@ function ReviewerWorkspace({initialList,onListChange}){
   const departmentRows=useMemo(()=>department?(list||[]).filter(row=>assignmentDepartment(row)===department):(list||[]),[list,department])
   const people=useMemo(()=>{const seen=new Map();departmentRows.forEach(row=>{const key=String(row.employee_id);if(!seen.has(key))seen.set(key,{id:row.employee_id,name:row.employee,no:row.employee_no||'',designation:row.designation||''})});return[...seen.values()].sort((a,b)=>compareText(a.name,b.name))},[departmentRows])
   const personId=current?String(current.employee_id):''
-  const personRows=useMemo(()=>departmentRows.filter(row=>String(row.employee_id)===personId).sort((a,b)=>String(b.month||'').localeCompare(String(a.month||''))||String(b.id).localeCompare(String(a.id))),[departmentRows,personId])
+  const personRows=useMemo(()=>departmentRows.filter(row=>String(row.employee_id)===personId && (row.review_type||'monthly')==='monthly').sort((a,b)=>String(b.month||'').localeCompare(String(a.month||''))||String(b.id).localeCompare(String(a.id))),[departmentRows,personId])
 
   function selectDepartment(value){
     const candidates=(list||[]).filter(row=>assignmentDepartment(row)===value).sort((a,b)=>compareText(a.employee,b.employee))
@@ -170,6 +170,40 @@ function ReviewerWorkspace({initialList,onListChange}){
     if(preferred)setParams({assignment:preferred.id})
   }
   function selectPeriod(value){if(value)setParams({assignment:value})}
+  const currentIdx=personRows.findIndex(row=>String(row.id)===String(id))
+  const hasNextMonthInList=currentIdx>0
+  const hasPrevMonthInList=currentIdx>=0&&currentIdx<personRows.length-1
+
+  async function handleNextMonth(){
+    if(hasNextMonthInList){
+      selectPeriod(personRows[currentIdx-1].id)
+      return
+    }
+    if(!['superadmin','hr'].includes(user?.role))return
+    setBusy(true);setError('');setMessage('')
+    try{
+      await api.post('/kpi/cycles/auto-generate?next_month=true')
+      const {data}=await api.get('/kpi/my')
+      setList(data)
+      onListChange?.(data)
+      const empRows=data.filter(row=>String(row.employee_id)===String(personId))
+      const preferred=chooseDefaultReviewPeriod(empRows)||empRows[0]
+      if(preferred){
+        setParams({assignment:preferred.id})
+        setMessage(`Next month KPI loaded: ${periodLabel(preferred)}`)
+      }
+    }catch(e){
+      setError(getError(e))
+    }finally{
+      setBusy(false)
+    }
+  }
+
+  function handlePrevMonth(){
+    if(hasPrevMonthInList){
+      selectPeriod(personRows[currentIdx+1].id)
+    }
+  }
 
   const items=useMemo(()=>assignment?assignment.template.kras.flatMap(kra=>kra.items):[],[assignment])
   const managerReady=items.length>0&&items.every(item=>{const v=values[item.id]||{};return isChoice(item)?Boolean(v.manager_selected_option):v.manager_actual_numeric!==null&&v.manager_actual_numeric!==undefined&&v.manager_actual_numeric!==''})
@@ -307,7 +341,91 @@ function ReviewerWorkspace({initialList,onListChange}){
   return <>
     <PageHeader title={canReview?'KPI Manager Review':'KPI Hierarchy View'} subtitle={canReview?'Review the actual business result in its configured unit. The same target, direction and qualifying rule converts the manager result into marks out of 100.':'You can view KPI results for all levels below you. Manager input remains editable only by the immediate reporting person.'} actions={<button className="secondary" onClick={downloadPdf}><Download size={16}/>Export PDF Report</button>}/>
     <ErrorBox error={error}/>{message?<div className="success-box" style={{marginBottom:'12px'}}>{message}</div>:null}
-    <Card><div className="form-grid three-responsive"><label><span>1. Department</span><select value={department||''} onChange={e=>selectDepartment(e.target.value)}>{departments.map(name=><option key={name} value={name}>{name}</option>)}</select></label><label><span>2. Employee</span><select value={personId} onChange={e=>selectPerson(e.target.value)}>{people.map(person=><option key={person.id} value={person.id}>{person.name} ({person.no}){person.designation?` · ${person.designation}`:''}</option>)}</select></label><label><span>3. Review Period</span><select value={String(id||'')} onChange={e=>selectPeriod(e.target.value)}>{personRows.map(row=><option key={row.id} value={row.id}>{periodLabel(row)}</option>)}</select></label></div></Card>
+    <Card>
+      <div className="form-grid three-responsive">
+        <label><span>1. Department</span><select value={department||''} onChange={e=>selectDepartment(e.target.value)}>{departments.map(name=><option key={name} value={name}>{name}</option>)}</select></label>
+        <label><span>2. Employee</span><select value={personId} onChange={e=>selectPerson(e.target.value)}>{people.map(person=><option key={person.id} value={person.id}>{person.name} ({person.no}){person.designation?` · ${person.designation}`:''}</option>)}</select></label>
+        <div>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'4px'}}>
+            <span style={{fontWeight:600,fontSize:'0.82rem',color:'#475569'}}>3. Review Period</span>
+            <div style={{display:'flex',gap:'6px'}}>
+              <button
+                type="button"
+                className="secondary small"
+                disabled={!hasPrevMonthInList}
+                onClick={handlePrevMonth}
+                title="Previous Month"
+                style={{padding:'2px 7px',fontSize:'11px',display:'inline-flex',alignItems:'center',gap:'2px'}}
+              >
+                <ChevronLeft size={12}/> Prev
+              </button>
+              <button
+                type="button"
+                className="primary small"
+                disabled={busy || (!hasNextMonthInList && !isAdminOrHr)}
+                onClick={handleNextMonth}
+                title={hasNextMonthInList ? "Select Next Month KPI" : isAdminOrHr ? "Generate and Select Next Month KPI" : "Next month not assigned yet"}
+                style={{padding:'2px 7px',fontSize:'11px',display:'inline-flex',alignItems:'center',gap:'2px',opacity:(!hasNextMonthInList && !isAdminOrHr)?0.45:1}}
+              >
+                Next <ChevronRight size={12}/>
+              </button>
+            </div>
+          </div>
+          <select value={String(id||'')} onChange={e=>selectPeriod(e.target.value)} style={{width:'100%'}}>
+            {personRows.map(row=><option key={row.id} value={row.id}>{periodLabel(row)}</option>)}
+          </select>
+          {personRows.length > 0 ? (
+            <div style={{display:'flex',gap:'5px',flexWrap:'wrap',marginTop:'8px'}}>
+              {personRows.slice(0, 5).map(row => {
+                const active = String(row.id) === String(id)
+                return (
+                  <button
+                    key={row.id}
+                    type="button"
+                    onClick={() => selectPeriod(row.id)}
+                    style={{
+                      border: active ? '1.5px solid #2563eb' : '1px solid #cbd5e1',
+                      background: active ? '#eff6ff' : '#ffffff',
+                      color: active ? '#1d4ed8' : '#475569',
+                      fontWeight: active ? 700 : 500,
+                      fontSize: '11px',
+                      borderRadius: '6px',
+                      padding: '2px 7px',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {periodLabel(row)}
+                  </button>
+                )
+              })}
+              {isAdminOrHr ? (
+                <button
+                  type="button"
+                  onClick={handleNextMonth}
+                  disabled={busy}
+                  style={{
+                    border: '1px dashed #2563eb',
+                    background: '#f0fdf4',
+                    color: '#16a34a',
+                    fontWeight: 600,
+                    fontSize: '11px',
+                    borderRadius: '6px',
+                    padding: '2px 7px',
+                    cursor: 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '3px'
+                  }}
+                  title="Add or Select Next Month KPI (Admin)"
+                >
+                  <Plus size={11}/> Next Month
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </Card>
 
     <div className="metric-grid compact" style={{margin:'14px 0'}}>
       <Card><div className="muted">Employee</div><strong>{assignment.employee}</strong><div className="muted">Reports to: {assignment.manager_name||'Not assigned'}</div></Card>

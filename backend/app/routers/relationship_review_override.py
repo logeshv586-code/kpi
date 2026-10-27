@@ -185,7 +185,10 @@ def _clear_manager_review(assignment: KpiAssignment):
 def _ensure_assignments_for_scope(db: Session, user: User):
     cycles = db.scalars(
         select(KpiCycle)
-        .where(KpiCycle.status != CycleStatus.closed)
+        .where(
+            KpiCycle.status != CycleStatus.closed,
+            (KpiCycle.review_type == "monthly") | (KpiCycle.review_type.is_(None)),
+        )
         .order_by(KpiCycle.id.desc())
     ).all()
     if not cycles:

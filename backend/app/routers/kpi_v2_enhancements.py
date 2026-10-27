@@ -7,7 +7,7 @@ from datetime import date, datetime, timedelta
 from time import sleep
 from zoneinfo import ZoneInfo
 
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
@@ -101,12 +101,6 @@ def _review_definition(review_type: str, month: date) -> tuple[date, date, str, 
 def _period_specs(month: date) -> list[dict]:
     month = month.replace(day=1)
     types = ["monthly"]
-    if month.month in {6, 9, 12, 3}:
-        types.append("quarterly")
-    if month.month in {9, 3}:
-        types.append("half_yearly")
-    if month.month == 3:
-        types.append("annual")
 
     specs = []
     for review_type in types:
@@ -291,7 +285,11 @@ def enhanced_my_assignments(db: Session = Depends(get_db), user: User = Depends(
 
     stmt = (
         select(KpiAssignment)
-        .where(KpiAssignment.user_id.in_(visible_ids))
+        .join(KpiCycle, KpiAssignment.cycle_id == KpiCycle.id)
+        .where(
+            KpiAssignment.user_id.in_(visible_ids),
+            (KpiCycle.review_type == "monthly") | (KpiCycle.review_type.is_(None)),
+        )
         .options(
             joinedload(KpiAssignment.user).joinedload(User.manager),
             joinedload(KpiAssignment.user).joinedload(User.designation).joinedload(Designation.department).joinedload(Department.division),
@@ -442,8 +440,31 @@ def enhanced_create_cycle(payload: CycleIn, db: Session = Depends(get_db), user=
 
 
 @kpi_router.router.post("/cycles/auto-generate")
-def enhanced_auto_generate_cycle(db: Session = Depends(get_db), actor=Depends(review_period_roles)):
-    current_month = date.today().replace(day=1)
+def enhanced_auto_generate_cycle(
+    next_month: bool = Query(False),
+    target_month: str | None = Query(None),
+    db: Session = Depends(get_db),
+    actor: User = Depends(review_period_roles),
+):
+    if target_month:
+        try:
+            current_month = date.fromisoformat(target_month[:10]).replace(day=1)
+        except Exception:
+            current_month = date.today().replace(day=1)
+    elif next_month:
+        latest = db.scalar(select(KpiCycle.month).order_by(KpiCycle.month.desc()).limit(1))
+        if latest:
+            y = latest.year + (1 if latest.month == 12 else 0)
+            m = 1 if latest.month == 12 else latest.month + 1
+            current_month = date(y, m, 1)
+        else:
+            today = date.today()
+            y = today.year + (1 if today.month == 12 else 0)
+            m = 1 if today.month == 12 else today.month + 1
+            current_month = date(y, m, 1)
+    else:
+        current_month = date.today().replace(day=1)
+
     created = []
     existing = []
     for spec in _period_specs(current_month):
@@ -462,7 +483,12 @@ def enhanced_auto_generate_cycle(db: Session = Depends(get_db), actor=Depends(re
         audit(db, actor.id, "auto_generate", "kpi_cycle", cycle.id, {"review_type": spec["review_type"]})
         created.append(cycle.name)
     db.commit()
-    review._ensure_assignments_for_scope(db, actor)
+
+    # Ensure assignments for ALL active employees
+    superadmin = db.scalar(select(User).where(User.role == Role.superadmin).limit(1))
+    scope_user = superadmin or actor
+    review._ensure_assignments_for_scope(db, scope_user)
+
     return {"created": created, "existing": existing, "review_month": current_month.isoformat()}
 
 
@@ -515,6 +541,8 @@ def review_matrix(db: Session = Depends(get_db), user: User = Depends(get_curren
         if not assignment.cycle or not assignment.user:
             continue
         cycle = assignment.cycle
+        if cycle.review_type and cycle.review_type != "monthly":
+            continue
         key = f"cycle-{cycle.id}"
         review_type = getattr(cycle, "review_type", "monthly") or "monthly"
         period_by_id[cycle.id] = {

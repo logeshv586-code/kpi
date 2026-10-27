@@ -61,13 +61,8 @@ export default function Reports(){
     if (reviewType === 'quarterly') {
       return Object.entries(quarterMonths).map(([qLabel, months]) => {
         const matching = filteredPeriods.filter(p => {
+          if ((p.review_type || 'monthly') !== 'monthly') return false
           const m = Number(String(p.month || '').slice(5, 7))
-          if (p.review_type === 'quarterly') {
-            return (qLabel.startsWith('Q1') && m === 6) ||
-                   (qLabel.startsWith('Q2') && m === 9) ||
-                   (qLabel.startsWith('Q3') && m === 12) ||
-                   (qLabel.startsWith('Q4') && m === 3)
-          }
           return months.includes(m)
         })
         return {
@@ -83,11 +78,8 @@ export default function Reports(){
     if (reviewType === 'half_yearly') {
       return Object.entries(halfYearMonths).map(([hLabel, months]) => {
         const matching = filteredPeriods.filter(p => {
+          if ((p.review_type || 'monthly') !== 'monthly') return false
           const m = Number(String(p.month || '').slice(5, 7))
-          if (p.review_type === 'half_yearly') {
-            return (hLabel.startsWith('H1') && m === 9) ||
-                   (hLabel.startsWith('H2') && m === 3)
-          }
           return months.includes(m)
         })
         return {
@@ -101,11 +93,12 @@ export default function Reports(){
     }
 
     if (reviewType === 'annual') {
+      const matching = filteredPeriods.filter(p => (p.review_type || 'monthly') === 'monthly')
       return [{
         key: 'annual_full',
         label: `Annual (Apr–Mar) · ${financialYear || 'FY'}`,
-        keys: filteredPeriods.map(p => p.key),
-        status: filteredPeriods.some(p => p.status === 'running') ? 'running' : 'upcoming'
+        keys: matching.map(p => p.key),
+        status: matching.some(p => p.status === 'running') ? 'running' : 'upcoming'
       }]
     }
 

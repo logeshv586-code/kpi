@@ -1,5 +1,5 @@
 import {useEffect,useMemo,useState} from 'react'
-import {CalendarDays,CheckCircle2,ChevronLeft,ChevronRight,Download,ExternalLink,Eye,File,FileSpreadsheet,FileText,FileUp,Image as ImageIcon,Info,MessageSquare,Paperclip} from 'lucide-react'
+import {CalendarDays,CheckCircle2,ChevronLeft,ChevronRight,Download,ExternalLink,Eye,File,FileSpreadsheet,FileText,FileUp,Image as ImageIcon,Info,MessageSquare,Paperclip,Plus} from 'lucide-react'
 import {useSearchParams} from 'react-router-dom'
 import {api,apiFileDownloadUrl,apiFileUrl,getError,apiPostForm} from '../lib/api'
 import {useAuth} from '../lib/auth'
@@ -114,11 +114,17 @@ export default function KpiInputV2(){
   const[department,setDepartment]=useState(''),[person,setPerson]=useState(''),[error,setError]=useState(''),[message,setMessage]=useState(''),[busy,setBusy]=useState(false)
   const[showMonths,setShowMonths]=useState(false),[selectedYear,setSelectedYear]=useState(new Date().getFullYear()),[showImporter,setShowImporter]=useState(false),[importPreview,setImportPreview]=useState(null),[importBusy,setImportBusy]=useState(false)
 
+  const currentSummary=(list||[]).find(a=>String(a.id)===String(id))
+  const currentMonthKey = new Date().toISOString().slice(0, 7)
+  const selectedMonthKey = String(assignment?.month || currentSummary?.month || '').slice(0, 7)
+  const isPastMonth = Boolean(selectedMonthKey && selectedMonthKey < currentMonthKey)
+  const isPeriodLocked = isPastMonth && !isAdminOrHr
+
   const isAdminOrHr=['superadmin','hr'].includes(user?.role)
   const isAssignedManager=assignment&&user?.role==='manager'&&assignment.manager_id===user.id
   const isManagerMode=isAdminOrHr||isAssignedManager
   const submitted=assignment&&['submitted','manager_reviewed','finalized'].includes(assignment.status)
-  const locked=(submitted&&!isManagerMode)||(assignment?.cycle_status==='closed')||Boolean(assignment?.is_locked&&!isAdminOrHr)
+  const locked=(submitted&&!isManagerMode)||(assignment?.cycle_status==='closed')||Boolean(assignment?.is_locked&&!isAdminOrHr)||isPeriodLocked
   const managerLocked=(assignment?.status==='finalized'&&!isAdminOrHr)||(assignment?.cycle_status==='closed')
 
   const loadList=()=>api.get('/kpi/my').then(r=>{
@@ -156,8 +162,7 @@ export default function KpiInputV2(){
   const departments=useMemo(()=>[...new Set((list||[]).map(assignmentDepartment).filter(Boolean))].sort(compareText),[list])
   const departmentRows=useMemo(()=>(list||[]).filter(a=>assignmentDepartment(a)===department),[list,department])
   const people=useMemo(()=>{const map=new Map();departmentRows.forEach(a=>{const key=String(a.employee_id);if(!map.has(key))map.set(key,{key,name:a.employee,no:a.employee_no||'',designation:a.designation||''})});return[...map.values()].sort((a,b)=>compareText(a.name,b.name))},[departmentRows])
-  const personRows=useMemo(()=>departmentRows.filter(a=>String(a.employee_id)===person).sort((a,b)=>String(b.month||'').localeCompare(String(a.month||''))||String(b.id).localeCompare(String(a.id))),[departmentRows,person])
-  const currentSummary=(list||[]).find(a=>String(a.id)===String(id))
+  const personRows=useMemo(()=>departmentRows.filter(a=>String(a.employee_id)===person && (a.review_type||'monthly')==='monthly').sort((a,b)=>String(b.month||'').localeCompare(String(a.month||''))||String(b.id).localeCompare(String(a.id))),[departmentRows,person])
 
   useEffect(()=>{
     if(!list?.length)return
@@ -181,6 +186,40 @@ export default function KpiInputV2(){
     if(preferred)setParams({assignment:preferred.id})
   }
   function selectPeriod(value){if(value)setParams({assignment:value})}
+  const currentIdx=personRows.findIndex(row=>String(row.id)===String(id))
+  const hasNextMonthInList=currentIdx>0
+  const hasPrevMonthInList=currentIdx>=0&&currentIdx<personRows.length-1
+
+  async function handleNextMonth(){
+    if(hasNextMonthInList){
+      selectPeriod(personRows[currentIdx-1].id)
+      return
+    }
+    if(!isAdminOrHr)return
+    setBusy(true);setError('');setMessage('')
+    try{
+      await api.post('/kpi/cycles/auto-generate?next_month=true')
+      const refreshed=await api.get('/kpi/my')
+      setList(refreshed.data)
+      const empRows=refreshed.data.filter(a=>String(a.employee_id)===String(person))
+      const preferred=chooseDefaultReviewPeriod(empRows)||empRows[0]
+      if(preferred){
+        setParams({assignment:preferred.id})
+        setMessage(`Next month KPI loaded: ${periodLabel(preferred)}`)
+      }
+    }catch(e){
+      setError(getError(e))
+    }finally{
+      setBusy(false)
+    }
+  }
+
+  function handlePrevMonth(){
+    if(hasPrevMonthInList){
+      selectPeriod(personRows[currentIdx+1].id)
+    }
+  }
+
   function openPeriodBrowser(){
     const year=Number(String(currentSummary?.month||'').slice(0,4))
     setSelectedYear(Number.isFinite(year)&&year>0?year:new Date().getFullYear())
@@ -270,7 +309,89 @@ export default function KpiInputV2(){
     <div className="kpi-selector-bar">
       <div><strong>1. Department</strong><select value={department} onChange={e=>selectDepartment(e.target.value)}><option value="">Choose department</option>{departments.map(d=><option key={d} value={d}>{d}</option>)}</select></div>
       <div><strong>2. Employee</strong><select value={person} onChange={e=>selectPerson(e.target.value)} disabled={!department}><option value="">Choose employee</option>{people.map(p=><option key={p.key} value={p.key}>{p.name}{p.no?` (${p.no})`:''}{p.designation?` · ${p.designation}`:''}</option>)}</select></div>
-      <div><strong>3. Review Period</strong><div className="responsive-actions"><select value={String(id||'')} onChange={e=>selectPeriod(e.target.value)} disabled={!person}>{personRows.map(row=><option key={row.id} value={row.id}>{periodLabel(row)} · {(row.review_type||'monthly').replace('_',' ')}</option>)}</select><button className="calendar-trigger" type="button" onClick={openPeriodBrowser} title="Browse all review periods"><CalendarDays size={18}/></button></div></div>
+      <div>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'4px'}}>
+          <strong>3. Review Period</strong>
+          <div style={{display:'flex',gap:'6px'}}>
+            <button
+              type="button"
+              className="secondary small"
+              disabled={!hasPrevMonthInList}
+              onClick={handlePrevMonth}
+              title="Previous Month"
+              style={{padding:'3px 8px',fontSize:'11px',display:'inline-flex',alignItems:'center',gap:'3px'}}
+            >
+              <ChevronLeft size={13}/> Prev
+            </button>
+            <button
+              type="button"
+              className="primary small"
+              disabled={busy || (!hasNextMonthInList && !isAdminOrHr)}
+              onClick={handleNextMonth}
+              title={hasNextMonthInList ? "Select Next Month KPI" : isAdminOrHr ? "Generate and Select Next Month KPI" : "Next month not assigned yet"}
+              style={{padding:'3px 8px',fontSize:'11px',display:'inline-flex',alignItems:'center',gap:'3px',opacity:(!hasNextMonthInList && !isAdminOrHr)?0.45:1}}
+            >
+              Next <ChevronRight size={13}/>
+            </button>
+          </div>
+        </div>
+        <div className="responsive-actions">
+          <select value={String(id||'')} onChange={e=>selectPeriod(e.target.value)} disabled={!person}>
+            {personRows.map(row=><option key={row.id} value={row.id}>{periodLabel(row)}</option>)}
+          </select>
+          <button className="calendar-trigger" type="button" onClick={openPeriodBrowser} title="Browse all review periods"><CalendarDays size={18}/></button>
+        </div>
+        {personRows.length > 0 ? (
+          <div style={{display:'flex',gap:'5px',flexWrap:'wrap',marginTop:'8px'}}>
+            {personRows.slice(0, 5).map(row => {
+              const active = String(row.id) === String(id)
+              return (
+                <button
+                  key={row.id}
+                  type="button"
+                  onClick={() => selectPeriod(row.id)}
+                  style={{
+                    border: active ? '1.5px solid #2563eb' : '1px solid #cbd5e1',
+                    background: active ? '#eff6ff' : '#ffffff',
+                    color: active ? '#1d4ed8' : '#475569',
+                    fontWeight: active ? 700 : 500,
+                    fontSize: '11px',
+                    borderRadius: '6px',
+                    padding: '3px 8px',
+                    cursor: 'pointer',
+                    transition: 'all 0.15s ease'
+                  }}
+                >
+                  {periodLabel(row)}
+                </button>
+              )
+            })}
+            {isAdminOrHr ? (
+              <button
+                type="button"
+                onClick={handleNextMonth}
+                disabled={busy}
+                style={{
+                  border: '1px dashed #2563eb',
+                  background: '#f0fdf4',
+                  color: '#16a34a',
+                  fontWeight: 600,
+                  fontSize: '11px',
+                  borderRadius: '6px',
+                  padding: '3px 8px',
+                  cursor: 'pointer',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '4px'
+                }}
+                title="Add or Select Next Month KPI (Admin)"
+              >
+                <Plus size={12}/> Next Month
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
     </div>
 
     <div className="helper-strip"><strong>Measurement scoring:</strong> target value = 100 marks. Higher-is-better uses actual ÷ target; lower-is-better uses target ÷ actual. Marks are capped at 100 and rounded to a whole integer. If the qualifying value is not achieved, that KPI gets 0 marks. KRA average and final weighted score may show two decimals.</div>
@@ -456,7 +577,11 @@ export default function KpiInputV2(){
           </div>
         </div>
       ) : (
-        <div className="locked-note">This KPI is locked after submission.</div>
+        <div className="locked-note">
+          {isPeriodLocked
+            ? `Past review period (${periodLabel(assignment || currentSummary)}). Only the current review month or admin-scheduled next month can be filled.`
+            : 'This KPI is locked after submission.'}
+        </div>
       )}
     </>}
 
