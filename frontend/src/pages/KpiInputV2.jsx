@@ -114,13 +114,12 @@ export default function KpiInputV2(){
   const[department,setDepartment]=useState(''),[person,setPerson]=useState(''),[error,setError]=useState(''),[message,setMessage]=useState(''),[busy,setBusy]=useState(false)
   const[showMonths,setShowMonths]=useState(false),[selectedYear,setSelectedYear]=useState(new Date().getFullYear()),[showImporter,setShowImporter]=useState(false),[importPreview,setImportPreview]=useState(null),[importBusy,setImportBusy]=useState(false)
 
+  const isAdminOrHr=['superadmin','hr'].includes(user?.role)
   const currentSummary=(list||[]).find(a=>String(a.id)===String(id))
   const currentMonthKey = new Date().toISOString().slice(0, 7)
   const selectedMonthKey = String(assignment?.month || currentSummary?.month || '').slice(0, 7)
   const isPastMonth = Boolean(selectedMonthKey && selectedMonthKey < currentMonthKey)
   const isPeriodLocked = isPastMonth && !isAdminOrHr
-
-  const isAdminOrHr=['superadmin','hr'].includes(user?.role)
   const isAssignedManager=assignment&&user?.role==='manager'&&assignment.manager_id===user.id
   const isManagerMode=isAdminOrHr||isAssignedManager
   const submitted=assignment&&['submitted','manager_reviewed','finalized'].includes(assignment.status)
